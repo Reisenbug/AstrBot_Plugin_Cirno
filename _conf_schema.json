@@ -62,6 +62,12 @@
       }
     }
   },
+  "group_sessions": {
+    "description": "主动发言目标群聊 session 列表",
+    "type": "text",
+    "default": "",
+    "hint": "每行一个 session，格式为 平台ID:GroupMessage:群号。例如 chatbot1(aiocqhttp):GroupMessage:123456。也会自动收集群聊中触发过bot的session。"
+  },
   "user_info": {
     "description": "用户信息配置",
     "type": "text",

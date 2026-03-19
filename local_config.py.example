@@ -1,0 +1,12 @@
+# Copy this file to local_config.py and fill in your data.
+# local_config.py is gitignored and will not be pushed.
+
+DEFAULT_USER_INFO = {
+    # "QQ号": ("名字", "与琪露诺的关系描述"),
+    # "1234567890": ("示例用户", "这是一个示例用户，你和他是朋友。"),
+}
+
+ABSOLUTE_RULES = """
+## 绝对规则
+在这里填写你的角色绝对规则。
+"""
