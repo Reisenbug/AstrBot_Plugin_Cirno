@@ -1,0 +1,71 @@
+{
+  "state_settings": {
+    "description": "状态机设置",
+    "type": "object",
+    "items": {
+      "min_state_duration": {
+        "description": "状态最短持续时间（秒）",
+        "type": "int",
+        "default": 1800,
+        "hint": "每个状态至少持续多久才可能切换，默认1800秒（30分钟）"
+      },
+      "transition_rate": {
+        "description": "状态切换速率",
+        "type": "float",
+        "default": 0.05,
+        "hint": "每小时增加的切换概率，默认0.05"
+      },
+      "max_transition_chance": {
+        "description": "最大切换概率",
+        "type": "float",
+        "default": 0.3,
+        "hint": "切换概率上限，默认0.3"
+      },
+      "enable_season": {
+        "description": "启用季节系统",
+        "type": "bool",
+        "default": true
+      }
+    }
+  },
+  "proactive_settings": {
+    "description": "主动发言设置",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用主动发言",
+        "type": "bool",
+        "default": true
+      },
+      "check_interval_minutes": {
+        "description": "检查间隔（分钟）",
+        "type": "int",
+        "default": 10,
+        "hint": "每隔多少分钟检查一次是否主动发言"
+      },
+      "cooldown_seconds": {
+        "description": "发言冷却时间（秒）",
+        "type": "int",
+        "default": 3600,
+        "hint": "两次主动发言之间的最短间隔，默认3600秒（1小时）"
+      },
+      "base_chance": {
+        "description": "基础发言概率",
+        "type": "float",
+        "default": 0.15,
+        "hint": "每次检查时主动发言的概率，0-1之间"
+      },
+      "proactive_system_prompt_suffix": {
+        "description": "主动发言时的额外提示",
+        "type": "text",
+        "default": "请用琪露诺的语气，简短地说一两句话。不要太长，像是在群里随口说的。"
+      }
+    }
+  },
+  "user_info": {
+    "description": "用户信息配置",
+    "type": "text",
+    "default": "",
+    "hint": "JSON格式的用户信息，格式：{\"QQ号\": [\"名字\", \"描述\"]}。留空则使用代码中的默认值。"
+  }
+}

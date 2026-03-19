@@ -1,0 +1,7 @@
+name: astrbot_plugin_cirno
+display_name: 琪露诺状态系统
+desc: "琪露诺状态系统 - 自定义prompt注入、状态机、主动发言"
+version: v2.0.0
+author: Reisenbug
+astrbot_version: ">=4.16.0"
+repo: "https://github.com/Reisenbug/AstrBot_Plugin_Cirno"
