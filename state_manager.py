@@ -37,6 +37,8 @@ class CirnoStateManager:
         self.proactive_cooldown = proactive_cooldown
         self.proactive_base_chance = proactive_base_chance
         self.enable_season = enable_season
+        self.ignored_count = 0
+        self.silent = False
 
     def maybe_transition(self) -> bool:
         now = time.time()
@@ -100,7 +102,21 @@ class CirnoStateManager:
                 self.state_entered_at = time.time()
                 return
 
+    LONELY_TOPICS = [
+        "怎么没人陪我玩...",
+        "咱无聊了...",
+        "哼，你们都不理我，最强的我才不在乎呢……",
+        "喂——有人吗——",
+    ]
+
+    def on_user_interaction(self):
+        self.ignored_count = 0
+        self.silent = False
+
     def should_speak_proactively(self) -> str | None:
+        if self.silent:
+            return None
+
         state = CIRNO_STATES[self.current_state]
         if not state["proactive_topics"]:
             return None
@@ -112,8 +128,14 @@ class CirnoStateManager:
         if random.random() > self.proactive_base_chance:
             return None
 
-        topic = random.choice(state["proactive_topics"])
+        self.ignored_count += 1
         self.last_proactive_msg = now
+
+        if self.ignored_count >= 3:
+            self.silent = True
+            return random.choice(self.LONELY_TOPICS)
+
+        topic = random.choice(state["proactive_topics"])
         return topic
 
     def get_prompt_injection(self) -> str:
@@ -126,7 +148,7 @@ class CirnoStateManager:
             if modifier and modifier.get("extra_prompt"):
                 text += f"\n{modifier['extra_prompt']}"
 
-        text += "\n如果你的当前状态和群友聊的话题无关，你不需要强行提起自己在干什么。只有在自然的时候才提到，比如有人问你\u201c在干嘛\u201d，或者当前状态和话题刚好相关。"
+        text += "\n如果你的当前状态和群友聊的话题无关，你不需要强行提起自己在干什么。只有在自然的时候才提到，比如有人问你“在干嘛”，或者当前状态和话题刚好相关。"
         return text
 
     def get_debug_info(self) -> dict:
@@ -140,6 +162,8 @@ class CirnoStateManager:
             "duration_minutes": int((duration % 3600) // 60),
             "season": _get_season() if self.enable_season else "disabled",
             "cooldown_minutes": int(cooldown_left // 60),
+            "ignored_count": self.ignored_count,
+            "silent": self.silent,
         }
 
     def to_dict(self) -> dict:
@@ -147,6 +171,8 @@ class CirnoStateManager:
             "current_state": self.current_state,
             "state_entered_at": self.state_entered_at,
             "last_proactive_msg": self.last_proactive_msg,
+            "ignored_count": self.ignored_count,
+            "silent": self.silent,
         }
 
     def from_dict(self, data: dict):
@@ -154,6 +180,8 @@ class CirnoStateManager:
         self.current_state = data.get("current_state", default_state)
         self.state_entered_at = data.get("state_entered_at", time.time())
         self.last_proactive_msg = data.get("last_proactive_msg", 0.0)
+        self.ignored_count = data.get("ignored_count", 0)
+        self.silent = data.get("silent", False)
         if self.current_state not in CIRNO_STATES:
             self.current_state = default_state
             self.state_entered_at = time.time()

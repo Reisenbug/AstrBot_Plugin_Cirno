@@ -93,6 +93,7 @@ class Main(Star):
 
     @filter.on_llm_request()
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
+        self.state_manager.on_user_interaction()
         self.state_manager.maybe_transition()
 
         if event.session.message_type == MessageType.GROUP_MESSAGE:
@@ -210,6 +211,8 @@ class Main(Star):
             f"持续时间: {info['duration_hours']}h{info['duration_minutes']}m",
             f"季节: {info['season']}",
             f"主动发言冷却剩余: {info['cooldown_minutes']}min",
+            f"无人回应计数: {info['ignored_count']}/3",
+            f"沉默模式: {'是' if info['silent'] else '否'}",
             f"已记录群聊: {len(self._group_sessions)}个",
             f"Cron Job: {'已注册' if self._cron_job_id else '未注册'}",
         ]
