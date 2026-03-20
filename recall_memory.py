@@ -29,13 +29,14 @@ def extract_keywords(text: str) -> list[str]:
 
 
 class RecallMemory:
-    def __init__(self, plugin, max_months: int = 6, top_k: int = 3):
+    def __init__(self, plugin, max_months: int = 4, top_k: int = 3):
         self._plugin = plugin
         self._max_months = max_months
         self._top_k = top_k
         self._current_month_key = ""
         self._current_month_data: list[dict] = []
         self._months_index: list[str] = []
+        self._history_cache: list[dict] = []
 
     async def load(self):
         self._months_index = await self._plugin.get_kv_data("recall_months", None) or []
@@ -47,10 +48,19 @@ class RecallMemory:
         self._current_month_data = (
             await self._plugin.get_kv_data(self._current_month_key, None) or []
         )
+
+        self._history_cache = []
+        for month_key in self._months_index:
+            if month_key == self._current_month_key:
+                continue
+            month_data = await self._plugin.get_kv_data(month_key, None)
+            if month_data and isinstance(month_data, list):
+                self._history_cache.extend(month_data)
+
+        total = len(self._current_month_data) + len(self._history_cache)
         logger.info(
             f"回忆记忆已加载，当前月 {self._current_month_key}，"
-            f"本月 {len(self._current_month_data)} 条记录，"
-            f"共 {len(self._months_index)} 个月份"
+            f"共 {total} 条记录，{len(self._months_index)} 个月份"
         )
 
     async def save_current_month(self):
@@ -62,6 +72,7 @@ class RecallMemory:
         month_key = f"recall_{now.year}_{now.month:02d}"
         if month_key != self._current_month_key:
             await self.save_current_month()
+            self._history_cache.extend(self._current_month_data)
             self._current_month_key = month_key
             if month_key not in self._months_index:
                 self._months_index.append(month_key)
@@ -81,7 +92,7 @@ class RecallMemory:
         self._current_month_data.append(entry)
         await self.save_current_month()
 
-    async def search(self, query: str, current_user_id: str | None = None, top_k: int | None = None) -> list[dict]:
+    def search(self, query: str, current_user_id: str | None = None, top_k: int | None = None) -> list[dict]:
         if top_k is None:
             top_k = self._top_k
         query_kw = set(extract_keywords(query))
@@ -91,15 +102,7 @@ class RecallMemory:
         now = time.time()
         scored: list[tuple[float, dict]] = []
 
-        all_data: list[dict] = list(self._current_month_data)
-        for month_key in self._months_index:
-            if month_key == self._current_month_key:
-                continue
-            month_data = await self._plugin.get_kv_data(month_key, None)
-            if month_data and isinstance(month_data, list):
-                all_data.extend(month_data)
-
-        for entry in all_data:
+        for entry in self._history_cache + self._current_month_data:
             entry_kw = set(entry.get("kw", []))
             if not entry_kw:
                 continue
@@ -125,8 +128,8 @@ class RecallMemory:
         lines = []
         for m in memories:
             name = m.get("name", "某人")
-            msg = m.get("msg", "")
-            reply = m.get("reply", "")
+            msg = m.get("msg", "")[:50]
+            reply = m.get("reply", "")[:50]
             ts = m.get("ts", 0)
             dt = datetime.fromtimestamp(ts)
             time_str = dt.strftime("%m月%d日")

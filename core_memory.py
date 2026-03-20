@@ -63,16 +63,13 @@ class CoreMemory:
         for uid, p in self._profiles.items():
             name = p.get("name", uid)
             rel = p.get("relationship", "")
-            traits = p.get("traits", [])
-            parts = [f"QQ号{uid}: {name}"]
             if rel:
-                parts.append(f"关系：{rel}")
-            if traits:
-                parts.append(f"特征：{'、'.join(traits)}")
-            lines.append("- " + "，".join(parts))
+                lines.append(f"- {name}(QQ{uid})：{rel}")
+            else:
+                lines.append(f"- {name}(QQ{uid})")
         if not lines:
             return ""
-        return "【你对群里这些人的印象】\n" + "\n".join(lines)
+        return "【你认识的人】\n" + "\n".join(lines)
 
     def build_sender_prompt(self, sender_id: str, sender_nickname: str) -> str:
         sender_id = str(sender_id)

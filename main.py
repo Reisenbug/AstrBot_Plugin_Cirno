@@ -132,7 +132,7 @@ class Main(Star):
         if self._enable_recall_memory:
             user_msg = event.message_str or ""
             if user_msg:
-                memories = await self.recall_memory.search(
+                memories = self.recall_memory.search(
                     user_msg, current_user_id=sender_id
                 )
                 if memories:
