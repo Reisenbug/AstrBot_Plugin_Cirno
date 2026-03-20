@@ -77,7 +77,9 @@ class CirnoStateManager:
         return any(abs(hour - h) <= 1 for h in hours)
 
     def _pick_new_state(self):
-        hour = datetime.now().hour
+        now = datetime.now()
+        hour = now.hour
+        is_weekday = now.weekday() < 5
         modifier = {}
         if self.enable_season:
             season = _get_season()
@@ -90,6 +92,8 @@ class CirnoStateManager:
             if state_id == self.current_state:
                 continue
             if not self._is_active_hour(state["active_hours"], hour):
+                continue
+            if state.get("weekday_only") and not is_weekday:
                 continue
             if state_id in state_override:
                 w = state_override[state_id]
