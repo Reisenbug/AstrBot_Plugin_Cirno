@@ -114,6 +114,11 @@ class Main(Star):
 
         sender_id = str(event.get_sender_id())
         sender_nickname = event.get_sender_name()
+        logger.info(
+            f"[琪露诺触发] 用户={sender_nickname}({sender_id}), "
+            f"状态={self.state_manager.current_state}, "
+            f"消息={event.message_str[:50] if event.message_str else ''}"
+        )
 
         if self._enable_core_memory:
             people_prompt = self.core_memory.build_people_prompt()
@@ -130,6 +135,14 @@ class Main(Star):
                 memories = await self.recall_memory.search(
                     user_msg, current_user_id=sender_id
                 )
+                if memories:
+                    logger.info(
+                        f"[琪露诺回忆检索] 命中 {len(memories)} 条: "
+                        + ", ".join(
+                            f"{m.get('name', '?')}「{m.get('msg', '')[:20]}」"
+                            for m in memories
+                        )
+                    )
                 recall_prompt = self.recall_memory.build_recall_prompt(memories)
                 if recall_prompt:
                     req.system_prompt += f"\n{recall_prompt}"
@@ -160,12 +173,19 @@ class Main(Star):
 
         if self._enable_recall_memory:
             await self.recall_memory.archive(sender_id, sender_name, user_msg, bot_reply)
+            logger.info(f"[琪露诺回忆归档] {sender_name}({sender_id}): {user_msg[:30]}")
 
-        if self._enable_core_memory and self.core_memory.should_update(sender_id):
-            recent_summary = f"{sender_name}说：「{user_msg}」\n琪露诺回答：「{bot_reply}」"
-            await self.core_memory.update_profile_via_llm(
-                sender_id, recent_summary, self.context
-            )
+        if self._enable_core_memory:
+            count = self.core_memory._counters.get(sender_id, 0)
+            if self.core_memory.should_update(sender_id):
+                logger.info(
+                    f"[琪露诺核心记忆] 触发LLM更新 {sender_name}({sender_id}), "
+                    f"交互计数={count}/{self.core_memory._threshold}"
+                )
+                recent_summary = f"{sender_name}说：「{user_msg}」\n琪露诺回答：「{bot_reply}」"
+                await self.core_memory.update_profile_via_llm(
+                    sender_id, recent_summary, self.context
+                )
 
     async def _proactive_check(self):
         self.state_manager.maybe_transition()

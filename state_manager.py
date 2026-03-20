@@ -1,8 +1,11 @@
+import logging
 import random
 import time
 from datetime import datetime
 
 from .cirno_states import CIRNO_STATES, SEASON_MODIFIERS
+
+logger = logging.getLogger("astrbot")
 
 
 def _get_season() -> str:
@@ -24,7 +27,7 @@ class CirnoStateManager:
         min_state_duration: int = 1800,
         transition_rate: float = 0.05,
         max_transition_chance: float = 0.3,
-        proactive_cooldown: int = 3600,
+        proactive_cooldown: int = 2700,
         proactive_base_chance: float = 0.15,
         enable_season: bool = True,
     ):
@@ -52,7 +55,15 @@ class CirnoStateManager:
         )
 
         if random.random() < transition_chance:
+            old_state = self.current_state
+            old_label = CIRNO_STATES[old_state]["label"]
             self._pick_new_state()
+            if self.current_state != old_state:
+                new_label = CIRNO_STATES[self.current_state]["label"]
+                logger.info(
+                    f"[琪露诺状态切换] {old_label}({old_state}) -> {new_label}({self.current_state})"
+                    f" | 已持续 {hours_in_state:.1f}h, 切换概率 {transition_chance:.2%}"
+                )
             return True
         return False
 
@@ -133,9 +144,12 @@ class CirnoStateManager:
 
         if self.ignored_count >= 3:
             self.silent = True
-            return random.choice(self.LONELY_TOPICS)
+            topic = random.choice(self.LONELY_TOPICS)
+            logger.info(f"[琪露诺主动发言] 连续无人回应({self.ignored_count}次)，进入沉默模式，最后说：{topic}")
+            return topic
 
         topic = random.choice(state["proactive_topics"])
+        logger.info(f"[琪露诺主动发言] 状态={state['label']}，话题：{topic}")
         return topic
 
     def get_prompt_injection(self) -> str:
