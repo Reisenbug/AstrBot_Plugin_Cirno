@@ -1,13 +1,14 @@
-import json
 import logging
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.provider import ProviderRequest
+from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.message_type import MessageType
 
+from .core_memory import CoreMemory
+from .recall_memory import RecallMemory
 from .state_manager import CirnoStateManager
 
 try:
@@ -25,35 +26,36 @@ class Main(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        self._user_info = self._load_user_info()
 
         state_cfg = config.get("state_settings", {})
         proactive_cfg = config.get("proactive_settings", {})
+        memory_cfg = config.get("memory_settings", {})
 
         self.state_manager = CirnoStateManager(
             min_state_duration=state_cfg.get("min_state_duration", 1800),
             transition_rate=state_cfg.get("transition_rate", 0.05),
             max_transition_chance=state_cfg.get("max_transition_chance", 0.3),
-            proactive_cooldown=proactive_cfg.get("cooldown_seconds", 3600),
+            proactive_cooldown=proactive_cfg.get("cooldown_seconds", 2700),
             proactive_base_chance=proactive_cfg.get("base_chance", 0.15),
             enable_season=state_cfg.get("enable_season", True),
         )
 
+        self._enable_core_memory = memory_cfg.get("enable_core_memory", True)
+        self._enable_recall_memory = memory_cfg.get("enable_recall_memory", True)
+
+        self.core_memory = CoreMemory(
+            plugin=self,
+            seed_data=DEFAULT_USER_INFO,
+            update_threshold=memory_cfg.get("core_memory_update_threshold", 15),
+        )
+        self.recall_memory = RecallMemory(
+            plugin=self,
+            max_months=memory_cfg.get("recall_memory_max_months", 6),
+            top_k=memory_cfg.get("recall_search_top_k", 3),
+        )
+
         self._group_sessions: set[str] = set()
         self._cron_job_id: str | None = None
-
-    def _load_user_info(self) -> dict[str, tuple[str, str]]:
-        raw = self.config.get("user_info", "")
-        if raw and isinstance(raw, str) and raw.strip():
-            try:
-                parsed = json.loads(raw)
-                return {
-                    str(k): (v[0], v[1] if len(v) > 1 else "")
-                    for k, v in parsed.items()
-                }
-            except Exception:
-                logger.warning("用户信息配置解析失败，使用默认值")
-        return DEFAULT_USER_INFO
 
     async def initialize(self):
         saved = await self.get_kv_data("state_data", None)
@@ -76,6 +78,12 @@ class Main(Star):
 
         if self._group_sessions:
             logger.info(f"已加载 {len(self._group_sessions)} 个群聊 session")
+
+        if self._enable_core_memory:
+            await self.core_memory.load()
+        if self._enable_recall_memory:
+            await self.recall_memory.load()
+            await self.recall_memory.cleanup_old_months()
 
         proactive_cfg = self.config.get("proactive_settings", {})
         if proactive_cfg.get("enable", True):
@@ -105,31 +113,59 @@ class Main(Star):
                 )
 
         sender_id = str(event.get_sender_id())
-        user_info = self._user_info
+        sender_nickname = event.get_sender_name()
 
-        people_list = "\n".join(
-            f"- QQ号{uid}: {name}" for uid, (name, _) in user_info.items()
-        )
-        req.system_prompt += f"\n你认识以下这些人:\n{people_list}"
+        if self._enable_core_memory:
+            people_prompt = self.core_memory.build_people_prompt()
+            if people_prompt:
+                req.system_prompt += f"\n{people_prompt}"
+        else:
+            req.system_prompt += "\n你认识一些人，但现在记忆模糊。"
 
         req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
 
+        if self._enable_recall_memory:
+            user_msg = event.message_str or ""
+            if user_msg:
+                memories = await self.recall_memory.search(
+                    user_msg, current_user_id=sender_id
+                )
+                recall_prompt = self.recall_memory.build_recall_prompt(memories)
+                if recall_prompt:
+                    req.system_prompt += f"\n{recall_prompt}"
+
         req.system_prompt += ABSOLUTE_RULES
 
-        sender_nickname = event.get_sender_name()
-        if sender_id in user_info:
-            name, prompt = user_info[sender_id]
-            req.system_prompt += (
-                f"\n当前和你对话的人QQ号是{sender_id}，QQ昵称是「{sender_nickname}」，"
-                f"你认识他，他的真名是{name}。{prompt}"
+        if self._enable_core_memory:
+            req.system_prompt += self.core_memory.build_sender_prompt(
+                sender_id, sender_nickname
             )
+            self.core_memory.record_interaction(sender_id)
         else:
             req.system_prompt += (
-                f"\n当前和你对话的人QQ号是{sender_id}，QQ昵称是「{sender_nickname}」，"
-                f"你不认识这个人。"
+                f"\n当前和你对话的人QQ号是{sender_id}，QQ昵称是「{sender_nickname}」。"
             )
 
         await self.put_kv_data("state_data", self.state_manager.to_dict())
+
+    @filter.on_llm_response()
+    async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
+        sender_id = str(event.get_sender_id())
+        sender_name = event.get_sender_name()
+        user_msg = event.message_str or ""
+        bot_reply = resp.completion_text or ""
+
+        if not user_msg or not bot_reply:
+            return
+
+        if self._enable_recall_memory:
+            await self.recall_memory.archive(sender_id, sender_name, user_msg, bot_reply)
+
+        if self._enable_core_memory and self.core_memory.should_update(sender_id):
+            recent_summary = f"{sender_name}说：「{user_msg}」\n琪露诺回答：「{bot_reply}」"
+            await self.core_memory.update_profile_via_llm(
+                sender_id, recent_summary, self.context
+            )
 
     async def _proactive_check(self):
         self.state_manager.maybe_transition()
@@ -162,10 +198,10 @@ class Main(Star):
         )
         base_system_prompt = persona.get("prompt", "") if persona else ""
 
-        user_info = self._user_info
-        people_list = "\n".join(
-            f"- QQ号{uid}: {name}" for uid, (name, _) in user_info.items()
-        )
+        if self._enable_core_memory:
+            people_prompt = self.core_memory.build_people_prompt()
+        else:
+            people_prompt = ""
 
         proactive_cfg = self.config.get("proactive_settings", {})
         suffix = proactive_cfg.get(
@@ -173,13 +209,13 @@ class Main(Star):
             "请用琪露诺的语气，简短地说一两句话。不要太长，像是在群里随口说的。",
         )
 
-        system_prompt = (
-            f"{base_system_prompt}"
-            f"\n你认识以下这些人:\n{people_list}"
-            f"\n{self.state_manager.get_prompt_injection()}"
-            f"{ABSOLUTE_RULES}"
-            f"\n{suffix}"
-        )
+        parts = [base_system_prompt]
+        if people_prompt:
+            parts.append(people_prompt)
+        parts.append(self.state_manager.get_prompt_injection())
+        parts.append(ABSOLUTE_RULES)
+        parts.append(suffix)
+        system_prompt = "\n".join(parts)
 
         fake_user_msg = f"[系统：琪露诺现在想说点什么，她刚才的经历是：{topic}]"
 
@@ -215,12 +251,18 @@ class Main(Star):
             f"沉默模式: {'是' if info['silent'] else '否'}",
             f"已记录群聊: {len(self._group_sessions)}个",
             f"Cron Job: {'已注册' if self._cron_job_id else '未注册'}",
+            f"核心记忆: {'启用' if self._enable_core_memory else '禁用'} ({len(self.core_memory._profiles)}人)",
+            f"回忆记忆: {'启用' if self._enable_recall_memory else '禁用'}",
         ]
         yield event.plain_result("\n".join(lines))
 
     async def terminate(self):
         await self.put_kv_data("state_data", self.state_manager.to_dict())
         await self.put_kv_data("group_sessions", list(self._group_sessions))
+        if self._enable_core_memory:
+            await self.core_memory.save()
+        if self._enable_recall_memory:
+            await self.recall_memory.save_current_month()
         if self._cron_job_id:
             try:
                 await self.context.cron_manager.delete_job(self._cron_job_id)

@@ -46,8 +46,8 @@
       "cooldown_seconds": {
         "description": "发言冷却时间（秒）",
         "type": "int",
-        "default": 3600,
-        "hint": "两次主动发言之间的最短间隔，默认3600秒（1小时）"
+        "default": 2700,
+        "hint": "两次主动发言之间的最短间隔，默认2700秒（45分钟）"
       },
       "base_chance": {
         "description": "基础发言概率",
@@ -73,5 +73,41 @@
     "type": "text",
     "default": "",
     "hint": "JSON格式的用户信息，格式：{\"QQ号\": [\"名字\", \"描述\"]}。留空则使用代码中的默认值。"
+  },
+  "memory_settings": {
+    "description": "记忆系统设置",
+    "type": "object",
+    "items": {
+      "enable_core_memory": {
+        "description": "启用核心记忆",
+        "type": "bool",
+        "default": true,
+        "hint": "启用后琪露诺会动态更新对每个人的印象"
+      },
+      "enable_recall_memory": {
+        "description": "启用回忆记忆",
+        "type": "bool",
+        "default": true,
+        "hint": "启用后琪露诺会记住历史对话并在相关话题时回忆"
+      },
+      "core_memory_update_threshold": {
+        "description": "核心记忆更新阈值",
+        "type": "int",
+        "default": 15,
+        "hint": "与某用户对话多少条后触发 LLM 更新印象"
+      },
+      "recall_memory_max_months": {
+        "description": "回忆记忆保留月数",
+        "type": "int",
+        "default": 6,
+        "hint": "保留最近几个月的对话记录"
+      },
+      "recall_search_top_k": {
+        "description": "回忆检索数量",
+        "type": "int",
+        "default": 3,
+        "hint": "每次对话最多检索几条相关回忆"
+      }
+    }
   }
 }
