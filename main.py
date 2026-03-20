@@ -129,7 +129,13 @@ class Main(Star):
 
         req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
 
-        if self._enable_recall_memory:
+        from .cirno_states import CIRNO_STATES
+        current_category = CIRNO_STATES.get(
+            self.state_manager.current_state, {}
+        ).get("category", "")
+        suppress_recall = current_category == "sleep"
+
+        if self._enable_recall_memory and not suppress_recall:
             user_msg = event.message_str or ""
             if user_msg:
                 memories = self.recall_memory.search(
