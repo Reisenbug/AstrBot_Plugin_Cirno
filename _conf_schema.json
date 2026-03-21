@@ -110,6 +110,23 @@
       }
     }
   },
+  "affinity_settings": {
+    "description": "好感度设置",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用好感度系统",
+        "type": "bool",
+        "default": true
+      },
+      "decay_rate": {
+        "description": "好感度自然衰减速率",
+        "type": "float",
+        "default": 0.5,
+        "hint": "每次交互时好感度向50衰减的速度，0-2之间"
+      }
+    }
+  },
   "meme_settings": {
     "description": "表情包设置",
     "type": "object",

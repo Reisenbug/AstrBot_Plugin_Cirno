@@ -9,6 +9,7 @@ from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.message_type import MessageType
 
+from .affinity import AffinityManager
 from .core_memory import CoreMemory
 from .meme_sender import MemeSelector
 from .recall_memory import RecallMemory
@@ -57,6 +58,13 @@ class Main(Star):
             top_k=memory_cfg.get("recall_search_top_k", 3),
         )
 
+        affinity_cfg = config.get("affinity_settings", {})
+        self._enable_affinity = affinity_cfg.get("enable", True)
+        self.affinity = AffinityManager(
+            plugin=self,
+            decay_rate=affinity_cfg.get("decay_rate", 0.5),
+        )
+
         meme_cfg = config.get("meme_settings", {})
         self._enable_meme = meme_cfg.get("enable", True)
         self.meme_selector = MemeSelector(
@@ -89,6 +97,8 @@ class Main(Star):
         if self._group_sessions:
             logger.info(f"已加载 {len(self._group_sessions)} 个群聊 session")
 
+        if self._enable_affinity:
+            await self.affinity.load()
         if self._enable_core_memory:
             await self.core_memory.load()
         if self._enable_recall_memory:
@@ -185,6 +195,10 @@ class Main(Star):
                 f"\n当前和你对话的人QQ号是{sender_id}，QQ昵称是「{sender_nickname}」。"
             )
 
+        if self._enable_affinity:
+            req.system_prompt += self.affinity.build_status_prompt(sender_id)
+            req.system_prompt += self.affinity.build_rating_prompt()
+
         if has_recall:
             req.system_prompt += (
                 "\n如果对方聊的话题和你记忆中的内容有关，你可以自然地提起你还记得之前聊过的事。"
@@ -217,6 +231,21 @@ class Main(Star):
                 recent_summary = f"{sender_name}说：「{user_msg}」\n琪露诺回答：「{bot_reply}」"
                 await self.core_memory.update_profile_via_llm(
                     sender_id, recent_summary, self.context
+                )
+
+        if self._enable_affinity:
+            cleaned, raw_delta = self.affinity.extract_delta(bot_reply)
+            if cleaned != bot_reply:
+                resp.completion_text = cleaned
+            from .cirno_states import CIRNO_STATES
+            cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
+            adjusted = self.affinity.update(sender_id, raw_delta, cat)
+            if abs(adjusted) > 0:
+                logger.info(
+                    f"[琪露诺好感度] {sender_name}({sender_id}): "
+                    f"{self.affinity.get(sender_id):.1f} "
+                    f"({'+' if adjusted > 0 else ''}{adjusted:.1f}), "
+                    f"等级={self.affinity.get_level(sender_id)}"
                 )
 
         if self._enable_meme:
@@ -324,12 +353,15 @@ class Main(Star):
             f"Cron Job: {'已注册' if self._cron_job_id else '未注册'}",
             f"核心记忆: {'启用' if self._enable_core_memory else '禁用'} ({len(self.core_memory._profiles)}人)",
             f"回忆记忆: {'启用' if self._enable_recall_memory else '禁用'}",
+            f"好感度: {'启用' if self._enable_affinity else '禁用'}",
         ]
         yield event.plain_result("\n".join(lines))
 
     async def terminate(self):
         await self.put_kv_data("state_data", self.state_manager.to_dict())
         await self.put_kv_data("group_sessions", list(self._group_sessions))
+        if self._enable_affinity:
+            await self.affinity.save()
         if self._enable_core_memory:
             await self.core_memory.save()
         if self._enable_recall_memory:

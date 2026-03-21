@@ -1,8 +1,9 @@
 import logging
 import math
-import re
 import time
 from datetime import datetime
+
+import jieba
 
 logger = logging.getLogger("astrbot")
 
@@ -17,6 +18,9 @@ STOP_WORDS = {
     "还", "再", "又", "才", "被", "把", "给", "让", "跟", "比",
     "真", "太", "挺", "最", "更", "特别", "非常", "一下", "一点",
     "知道", "觉得", "感觉", "应该", "可能", "已经", "正在", "开始",
+    "一些", "这样", "那么", "然后", "时候", "东西", "这么", "怎样",
+    "这里", "那里", "什么样", "为什么", "不过", "而且", "或者", "以及",
+    "关于", "通过", "一样",
     "the", "a", "an", "is", "are", "was", "were", "be", "been",
     "i", "you", "he", "she", "it", "we", "they", "me", "him", "her",
     "my", "your", "his", "its", "our", "their", "this", "that",
@@ -28,11 +32,8 @@ STOP_WORDS = {
 
 def extract_keywords(text: str) -> list[str]:
     text = text.lower()
-    words = re.findall(r'[a-zA-Z0-9]+', text)
-    cjk_chars = re.findall(r'[\u4e00-\u9fff]', text)
-    bigrams = [cjk_chars[i] + cjk_chars[i + 1] for i in range(len(cjk_chars) - 1)]
-    all_tokens = words + cjk_chars + bigrams
-    return [t for t in all_tokens if t not in STOP_WORDS and len(t) > 0]
+    words = jieba.lcut(text)
+    return [w.strip() for w in words if w.strip() and w.strip() not in STOP_WORDS and len(w.strip()) > 1]
 
 
 class RecallMemory:
