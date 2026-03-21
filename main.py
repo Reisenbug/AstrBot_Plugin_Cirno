@@ -185,6 +185,18 @@ class Main(Star):
                 if recall_prompt:
                     req.system_prompt += f"\n{recall_prompt}"
 
+        is_random_reply = (
+            not event.is_at_or_wake_command
+            and event.session.message_type == MessageType.GROUP_MESSAGE
+        )
+        if is_random_reply:
+            req.system_prompt += (
+                "\n你不是被叫到的，是自己凑过来插嘴的。"
+                "如果话题你不了解，绝对不要承认不知道——从字面意思或听起来像什么去猜，"
+                "然后基于你的理解（通常是错的）自信地参与讨论。"
+                "或者被某个具体的细节吸引，只追问那一个点。"
+            )
+
         req.system_prompt += ABSOLUTE_RULES
 
         if self._enable_core_memory:
