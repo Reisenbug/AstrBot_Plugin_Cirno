@@ -1,13 +1,16 @@
 import logging
+from pathlib import Path
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star
+from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.message_type import MessageType
 
 from .core_memory import CoreMemory
+from .meme_sender import MemeSelector
 from .recall_memory import RecallMemory
 from .state_manager import CirnoStateManager
 
@@ -54,6 +57,13 @@ class Main(Star):
             top_k=memory_cfg.get("recall_search_top_k", 3),
         )
 
+        meme_cfg = config.get("meme_settings", {})
+        self._enable_meme = meme_cfg.get("enable", True)
+        self.meme_selector = MemeSelector(
+            plugin_dir=str(Path(__file__).parent),
+            probability=meme_cfg.get("probability", 0.35),
+        )
+
         self._group_sessions: set[str] = set()
         self._cron_job_id: str | None = None
 
@@ -84,6 +94,14 @@ class Main(Star):
         if self._enable_recall_memory:
             await self.recall_memory.load()
             await self.recall_memory.cleanup_old_months()
+
+        if self._enable_meme:
+            stats = self.meme_selector.get_stats()
+            total = sum(stats.values())
+            logger.info(
+                f"琪露诺表情包已加载: 共{total}张, "
+                + ", ".join(f"{k}={v}" for k, v in stats.items())
+            )
 
         proactive_cfg = self.config.get("proactive_settings", {})
         if proactive_cfg.get("enable", True):
@@ -201,6 +219,19 @@ class Main(Star):
                     sender_id, recent_summary, self.context
                 )
 
+        if self._enable_meme:
+            meme_path = self.meme_selector.select(bot_reply)
+            if meme_path:
+                event.set_extra("cirno_meme_path", meme_path)
+
+    @filter.after_message_sent()
+    async def send_meme_after_reply(self, event: AstrMessageEvent):
+        meme_path = event.get_extra("cirno_meme_path")
+        if not meme_path:
+            return
+        msg = MessageChain(chain=[Image.fromFileSystem(meme_path)])
+        await self.context.send_message(event.unified_msg_origin, msg)
+
     async def _proactive_check(self):
         self.state_manager.maybe_transition()
         topic = self.state_manager.should_speak_proactively()
@@ -272,6 +303,12 @@ class Main(Star):
             f"琪露诺主动发言已发送到 {session_str}: "
             f"{llm_resp.completion_text[:50]}..."
         )
+
+        if self._enable_meme:
+            meme_path = self.meme_selector.select(llm_resp.completion_text)
+            if meme_path:
+                meme_msg = MessageChain(chain=[Image.fromFileSystem(meme_path)])
+                await self.context.send_message(session_str, meme_msg)
 
     @filter.command("琪露诺状态")
     async def debug_state(self, event: AstrMessageEvent):

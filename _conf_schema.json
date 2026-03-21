@@ -109,5 +109,23 @@
         "hint": "每次对话最多检索几条相关回忆"
       }
     }
+  },
+  "meme_settings": {
+    "description": "表情包设置",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用自动表情包",
+        "type": "bool",
+        "default": true,
+        "hint": "启用后琪露诺会根据回复情绪概率发送表情包"
+      },
+      "probability": {
+        "description": "发送概率",
+        "type": "float",
+        "default": 0.07,
+        "hint": "每次回复时发送表情包的概率，0-1之间"
+      }
+    }
   }
 }
