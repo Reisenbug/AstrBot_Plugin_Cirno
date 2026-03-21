@@ -1,11 +1,12 @@
 import logging
+import random
 from pathlib import Path
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star
-from astrbot.core.message.components import Image
+from astrbot.core.message.components import Image, Poke
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.message_type import MessageType
 
@@ -342,6 +343,66 @@ class Main(Star):
             if meme_path:
                 meme_msg = MessageChain(chain=[Image.fromFileSystem(meme_path)])
                 await self.context.send_message(session_str, meme_msg)
+
+    POKE_RESPONSES = {
+        "positive": [
+            "诶嘿~你戳我干嘛！想跟最强的我玩吗？",
+            "哇！干嘛戳我啦！再戳就把你冻成冰棍！",
+            "嘿嘿，你戳我一下我就戳你一下！",
+            "别戳了别戳了！痒！",
+            "哼，就只有你敢戳最强的我！",
+        ],
+        "neutral": [
+            "……干嘛？",
+            "戳戳戳，你烦不烦啊",
+            "有事说事，别戳",
+            "再戳把你手指冻住哦",
+        ],
+        "negative": [
+            "别碰我！",
+            "……",
+            "烦死了",
+            "滚",
+        ],
+        "sleep": [
+            "唔……别吵……",
+            "zzZ……再戳就冻你……zzZ",
+            "嗯……五分钟……再睡五分钟……",
+        ],
+    }
+
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def on_poke(self, event: AstrMessageEvent):
+        poke = None
+        for msg in event.get_messages():
+            if isinstance(msg, Poke):
+                poke = msg
+                break
+        if not poke:
+            return
+
+        bot_id = str(event.get_self_id())
+        if poke.target_id() and str(poke.target_id()) != bot_id:
+            return
+
+        sender_id = str(event.get_sender_id())
+
+        from .cirno_states import CIRNO_STATES
+        cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
+        if cat == "sleep":
+            pool = self.POKE_RESPONSES["sleep"]
+        elif self._enable_affinity:
+            level = self.affinity.get_level(sender_id)
+            if level in ("讨厌", "冷淡"):
+                pool = self.POKE_RESPONSES["negative"]
+            elif level in ("喜欢", "很喜欢", "最好的朋友"):
+                pool = self.POKE_RESPONSES["positive"]
+            else:
+                pool = self.POKE_RESPONSES["neutral"]
+        else:
+            pool = self.POKE_RESPONSES["neutral"]
+
+        yield event.plain_result(random.choice(pool))
 
     @filter.command("琪露诺状态")
     async def debug_state(self, event: AstrMessageEvent):
