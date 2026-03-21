@@ -157,12 +157,20 @@ class Main(Star):
         else:
             req.system_prompt += "\n你认识一些人，但现在记忆模糊。"
 
-        req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
-
         from .cirno_states import CIRNO_STATES
         current_category = CIRNO_STATES.get(
             self.state_manager.current_state, {}
         ).get("category", "")
+
+        state_prompt = self.state_manager.get_prompt_injection()
+        if current_category == "sleep":
+            req.system_prompt = (
+                f"[最高优先级指令] {state_prompt}\n"
+                "无论下面的人设怎么描述你的性格，你现在在睡觉，必须表现得困倦、迷糊。\n\n"
+                + req.system_prompt
+            )
+        else:
+            req.system_prompt += f"\n{state_prompt}"
         suppress_recall = current_category == "sleep"
 
         has_recall = False
