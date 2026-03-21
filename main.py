@@ -216,6 +216,23 @@ class Main(Star):
         user_msg = event.message_str or ""
         bot_reply = resp.completion_text or ""
 
+        if self._enable_affinity and bot_reply:
+            cleaned, mood_delta, affinity_delta = self.affinity.extract_delta(bot_reply)
+            if cleaned != bot_reply:
+                resp.completion_text = cleaned
+                bot_reply = cleaned
+            from .cirno_states import CIRNO_STATES
+            cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
+            mood_adj = self.affinity.update_mood(mood_delta, cat)
+            aff_adj = self.affinity.update_affinity(sender_id, affinity_delta, cat)
+            logger.info(
+                f"[琪露诺心情] {self.affinity.mood:.1f}({'+' if mood_adj > 0 else ''}{mood_adj:.1f}) "
+                f"等级={self.affinity.get_mood_level()} | "
+                f"[好感度] {sender_name}({sender_id}): {self.affinity.get(sender_id):.1f}"
+                f"({'+' if aff_adj > 0 else ''}{aff_adj:.1f}) "
+                f"等级={self.affinity.get_level(sender_id)}"
+            )
+
         if not user_msg or not bot_reply:
             return
 
@@ -234,22 +251,6 @@ class Main(Star):
                 await self.core_memory.update_profile_via_llm(
                     sender_id, recent_summary, self.context
                 )
-
-        if self._enable_affinity:
-            cleaned, mood_delta, affinity_delta = self.affinity.extract_delta(bot_reply)
-            if cleaned != bot_reply:
-                resp.completion_text = cleaned
-            from .cirno_states import CIRNO_STATES
-            cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
-            mood_adj = self.affinity.update_mood(mood_delta, cat)
-            aff_adj = self.affinity.update_affinity(sender_id, affinity_delta, cat)
-            logger.info(
-                f"[琪露诺心情] {self.affinity.mood:.1f}({'+' if mood_adj > 0 else ''}{mood_adj:.1f}) "
-                f"等级={self.affinity.get_mood_level()} | "
-                f"[好感度] {sender_name}({sender_id}): {self.affinity.get(sender_id):.1f}"
-                f"({'+' if aff_adj > 0 else ''}{aff_adj:.1f}) "
-                f"等级={self.affinity.get_level(sender_id)}"
-            )
 
         if self._enable_meme:
             meme_path = self.meme_selector.select(bot_reply)
