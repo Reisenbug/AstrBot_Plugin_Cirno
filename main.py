@@ -135,6 +135,7 @@ class Main(Star):
         ).get("category", "")
         suppress_recall = current_category == "sleep"
 
+        has_recall = False
         if self._enable_recall_memory and not suppress_recall:
             user_msg = event.message_str or ""
             if user_msg:
@@ -142,6 +143,7 @@ class Main(Star):
                     user_msg, current_user_id=sender_id
                 )
                 if memories:
+                    has_recall = True
                     logger.info(
                         f"[琪露诺回忆检索] 命中 {len(memories)} 条: "
                         + ", ".join(
@@ -163,6 +165,12 @@ class Main(Star):
         else:
             req.system_prompt += (
                 f"\n当前和你对话的人QQ号是{sender_id}，QQ昵称是「{sender_nickname}」。"
+            )
+
+        if has_recall:
+            req.system_prompt += (
+                "\n如果对方聊的话题和你记忆中的内容有关，你可以自然地提起你还记得之前聊过的事。"
+                "不要生硬地复述记忆内容，而是像真的想起来了一样随口带一嘴。"
             )
 
         await self.put_kv_data("state_data", self.state_manager.to_dict())

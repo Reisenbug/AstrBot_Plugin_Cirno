@@ -138,10 +138,17 @@ class RecallMemory:
             msg = m.get("msg", "")[:50]
             reply = m.get("reply", "")[:50]
             ts = m.get("ts", 0)
-            dt = datetime.fromtimestamp(ts)
-            time_str = dt.strftime("%m月%d日")
-            lines.append(f"- {time_str}，{name}说「{msg}」，你回答了「{reply}」")
-        return "【你隐约记得这些事】\n" + "\n".join(lines)
+            age_days = (time.time() - ts) / 86400
+            if age_days < 1:
+                time_hint = "今天"
+            elif age_days < 2:
+                time_hint = "昨天"
+            elif age_days < 7:
+                time_hint = "前几天"
+            else:
+                time_hint = "之前"
+            lines.append(f"- 你好像记得{time_hint}{name}跟你聊过「{msg}」，当时你说了「{reply}」")
+        return "【你脑子里浮现出一些模糊的记忆片段】\n" + "\n".join(lines)
 
     async def cleanup_old_months(self):
         if len(self._months_index) <= self._max_months:
