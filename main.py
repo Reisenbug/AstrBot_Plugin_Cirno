@@ -63,6 +63,7 @@ class Main(Star):
         self.affinity = AffinityManager(
             plugin=self,
             decay_rate=affinity_cfg.get("decay_rate", 0.5),
+            mood_decay_rate=affinity_cfg.get("mood_decay_rate", 1.0),
         )
 
         meme_cfg = config.get("meme_settings", {})
@@ -196,6 +197,7 @@ class Main(Star):
             )
 
         if self._enable_affinity:
+            req.system_prompt += self.affinity.build_mood_prompt()
             req.system_prompt += self.affinity.build_status_prompt(sender_id)
             req.system_prompt += self.affinity.build_rating_prompt()
 
@@ -234,19 +236,20 @@ class Main(Star):
                 )
 
         if self._enable_affinity:
-            cleaned, raw_delta = self.affinity.extract_delta(bot_reply)
+            cleaned, mood_delta, affinity_delta = self.affinity.extract_delta(bot_reply)
             if cleaned != bot_reply:
                 resp.completion_text = cleaned
             from .cirno_states import CIRNO_STATES
             cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
-            adjusted = self.affinity.update(sender_id, raw_delta, cat)
-            if abs(adjusted) > 0:
-                logger.info(
-                    f"[琪露诺好感度] {sender_name}({sender_id}): "
-                    f"{self.affinity.get(sender_id):.1f} "
-                    f"({'+' if adjusted > 0 else ''}{adjusted:.1f}), "
-                    f"等级={self.affinity.get_level(sender_id)}"
-                )
+            mood_adj = self.affinity.update_mood(mood_delta, cat)
+            aff_adj = self.affinity.update_affinity(sender_id, affinity_delta, cat)
+            logger.info(
+                f"[琪露诺心情] {self.affinity.mood:.1f}({'+' if mood_adj > 0 else ''}{mood_adj:.1f}) "
+                f"等级={self.affinity.get_mood_level()} | "
+                f"[好感度] {sender_name}({sender_id}): {self.affinity.get(sender_id):.1f}"
+                f"({'+' if aff_adj > 0 else ''}{aff_adj:.1f}) "
+                f"等级={self.affinity.get_level(sender_id)}"
+            )
 
         if self._enable_meme:
             meme_path = self.meme_selector.select(bot_reply)
@@ -353,8 +356,10 @@ class Main(Star):
             f"Cron Job: {'已注册' if self._cron_job_id else '未注册'}",
             f"核心记忆: {'启用' if self._enable_core_memory else '禁用'} ({len(self.core_memory._profiles)}人)",
             f"回忆记忆: {'启用' if self._enable_recall_memory else '禁用'}",
-            f"好感度: {'启用' if self._enable_affinity else '禁用'}",
+            f"好感度系统: {'启用' if self._enable_affinity else '禁用'}",
         ]
+        if self._enable_affinity:
+            lines.append(f"当前心情: {self.affinity.get_mood_level()}({self.affinity.mood:.0f})")
         yield event.plain_result("\n".join(lines))
 
     async def terminate(self):

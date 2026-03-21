@@ -124,6 +124,12 @@
         "type": "float",
         "default": 0.5,
         "hint": "每次交互时好感度向50衰减的速度，0-2之间"
+      },
+      "mood_decay_rate": {
+        "description": "心情自然衰减速率",
+        "type": "float",
+        "default": 1.0,
+        "hint": "每次交互时心情向0衰减的速度，0-3之间。心情衰减比好感度快"
       }
     }
   },
