@@ -24,7 +24,7 @@ class MemeSelector:
             os.makedirs(os.path.join(self.meme_dir, cat), exist_ok=True)
 
     def select(self, bot_reply: str) -> str | None:
-        if random.random() > self.probability:
+        if random.random() >= self.probability:
             return None
         mood = self._detect_mood(bot_reply)
         if not mood:

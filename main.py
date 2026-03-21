@@ -61,7 +61,7 @@ class Main(Star):
         self._enable_meme = meme_cfg.get("enable", True)
         self.meme_selector = MemeSelector(
             plugin_dir=str(Path(__file__).parent),
-            probability=meme_cfg.get("probability", 0.35),
+            probability=meme_cfg.get("probability", 0.07),
         )
 
         self._group_sessions: set[str] = set()
