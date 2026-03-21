@@ -12,10 +12,17 @@ STOP_WORDS = {
     "没有", "看", "好", "自己", "这", "他", "她", "它", "吗", "什么",
     "那", "啊", "呢", "吧", "嗯", "哦", "哈", "呀", "哪", "怎么",
     "可以", "这个", "那个", "但是", "因为", "所以", "如果", "虽然",
+    "干", "嘛", "干嘛", "干啥", "啥", "谁", "哪里", "多少", "为啥",
+    "来", "吗", "呗", "么", "吃", "玩", "做", "想", "能", "对",
+    "还", "再", "又", "才", "被", "把", "给", "让", "跟", "比",
+    "真", "太", "挺", "最", "更", "特别", "非常", "一下", "一点",
+    "知道", "觉得", "感觉", "应该", "可能", "已经", "正在", "开始",
     "the", "a", "an", "is", "are", "was", "were", "be", "been",
     "i", "you", "he", "she", "it", "we", "they", "me", "him", "her",
     "my", "your", "his", "its", "our", "their", "this", "that",
     "and", "or", "but", "in", "on", "at", "to", "for", "of", "with",
+    "do", "did", "does", "have", "has", "had", "will", "would",
+    "can", "could", "not", "no", "so", "if", "just", "like",
 }
 
 
@@ -108,7 +115,7 @@ class RecallMemory:
                 continue
 
             overlap = len(query_kw & entry_kw)
-            if overlap == 0:
+            if overlap < 2:
                 continue
 
             kw_score = overlap / max(len(query_kw), 1)
