@@ -162,16 +162,8 @@ class Main(Star):
             self.state_manager.current_state, {}
         ).get("category", "")
 
-        state_prompt = self.state_manager.get_prompt_injection()
-        if current_category == "sleep":
-            req.system_prompt = (
-                f"[最高优先级指令] {state_prompt}\n"
-                "无论下面的人设怎么描述你的性格，你现在在睡觉，必须表现得困倦、迷糊。\n\n"
-                + req.system_prompt
-            )
-        else:
-            req.system_prompt += f"\n{state_prompt}"
-        suppress_recall = current_category == "sleep"
+        req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
+        suppress_recall = current_category == "rest"
 
         has_recall = False
         if self._enable_recall_memory and not suppress_recall:
@@ -372,10 +364,10 @@ class Main(Star):
             "烦死了",
             "滚",
         ],
-        "sleep": [
-            "唔……别吵……",
-            "zzZ……再戳就冻你……zzZ",
-            "嗯……五分钟……再睡五分钟……",
+        "rest": [
+            "嗯？……我在想事情呢……别戳",
+            "吵什么啦……我在思考宇宙的奥秘……",
+            "唔……等一下……我刚才想到一个超厉害的点子……忘了",
         ],
     }
 
@@ -397,8 +389,8 @@ class Main(Star):
 
         from .cirno_states import CIRNO_STATES
         cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
-        if cat == "sleep":
-            pool = self.POKE_RESPONSES["sleep"]
+        if cat == "rest":
+            pool = self.POKE_RESPONSES["rest"]
         elif self._enable_affinity:
             level = self.affinity.get_level(sender_id)
             if level in ("讨厌", "冷淡"):

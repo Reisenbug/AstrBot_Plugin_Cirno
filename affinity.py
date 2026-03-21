@@ -23,7 +23,7 @@ MOOD_LEVELS = [
 ]
 
 STATE_CATEGORY_MODIFIERS = {
-    "sleep": {"negative": 1.5},
+    "rest": {"negative": 1.5},
     "social": {"positive": 1.3},
     "rare": {"negative": 1.5},
 }
