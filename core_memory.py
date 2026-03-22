@@ -126,11 +126,19 @@ class CoreMemory:
     def reset_counter(self, user_id: str):
         self._counters[str(user_id)] = 0
 
-    async def update_profile_via_llm(self, user_id: str, recent_summary: str, context):
+    async def update_profile_via_llm(self, user_id: str, recent_summary: str, context, nickname: str = ""):
         user_id = str(user_id)
         profile = self._profiles.get(user_id)
         if not profile:
-            return
+            profile = {
+                "name": nickname or user_id,
+                "relationship": "",
+                "traits": [],
+                "important_events": [],
+                "original_prompt": "",
+                "updated_at": time.time(),
+            }
+            self._profiles[user_id] = profile
 
         try:
             provider_id = context.get_all_providers()[0].meta().id

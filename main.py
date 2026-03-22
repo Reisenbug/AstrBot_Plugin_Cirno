@@ -273,7 +273,7 @@ class Main(Star):
                 )
                 recent_summary = f"{sender_name}说：「{user_msg}」\n琪露诺回答：「{bot_reply}」"
                 await self.core_memory.update_profile_via_llm(
-                    sender_id, recent_summary, self.context
+                    sender_id, recent_summary, self.context, nickname=sender_name
                 )
 
         if self._enable_meme:
