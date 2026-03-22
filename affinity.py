@@ -127,7 +127,7 @@ class AffinityManager:
 
         counters_saved = await self._plugin.get_kv_data("affinity_event_counters", None)
         if counters_saved and isinstance(counters_saved, dict):
-            self._event_counters = {k: v for k, v in counters_saved.items() if isinstance(v, (int, float))}
+            self._event_counters = {k: int(v) for k, v in counters_saved.items() if isinstance(v, (int, float))}
 
         logger.info(
             f"好感度系统已加载：{len(self._user_data)} 人，"
