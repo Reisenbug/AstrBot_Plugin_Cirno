@@ -86,9 +86,8 @@ class RecallMemory:
             self._current_month_key = month_key
             if month_key not in self._months_index:
                 self._months_index.append(month_key)
-            self._current_month_data = (
-                await self._plugin.get_kv_data(month_key, None) or []
-            )
+            raw = await self._plugin.get_kv_data(month_key, None)
+            self._current_month_data = raw if isinstance(raw, list) else []
 
         keywords = extract_keywords(user_msg + " " + bot_reply)
         entry = {
@@ -173,8 +172,14 @@ class RecallMemory:
             await self._plugin.delete_kv_data(key)
             logger.info(f"回忆记忆：清理过期月份 {key}")
         self._months_index = [k for k in self._months_index if k not in to_remove]
+        def _entry_month_key(e: dict) -> str:
+            try:
+                dt = datetime.fromtimestamp(float(e.get("ts", 0)))
+                return f"recall_{dt.year}_{dt.month:02d}"
+            except (TypeError, ValueError, OSError):
+                return ""
         self._history_cache = [
             e for e in self._history_cache
-            if f"recall_{datetime.fromtimestamp(e.get('ts', 0)).year}_{datetime.fromtimestamp(e.get('ts', 0)).month:02d}" not in to_remove
+            if _entry_month_key(e) not in to_remove
         ]
         await self._plugin.put_kv_data("recall_months", self._months_index)

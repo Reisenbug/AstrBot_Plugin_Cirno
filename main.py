@@ -1,11 +1,10 @@
 import random
 import re
-from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import LLMResponse, ProviderRequest
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.message.components import Image, Poke
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.message_type import MessageType
@@ -67,8 +66,9 @@ class Main(Star):
 
         meme_cfg = config.get("meme_settings", {})
         self._enable_meme = meme_cfg.get("enable", True)
+        data_dir = str(StarTools.get_data_dir("astrbot_plugin_cirno"))
         self.meme_selector = MemeSelector(
-            plugin_dir=str(Path(__file__).parent),
+            meme_dir=data_dir,
             probability=meme_cfg.get("probability", 0.07),
         )
 

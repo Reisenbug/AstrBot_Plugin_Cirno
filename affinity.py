@@ -154,10 +154,19 @@ class AffinityManager:
     def vulnerability(self) -> float:
         return self._emotion["vulnerability"]
 
-    def get_composite(self, user_id: str) -> float:
+    _USER_DEFAULTS = {"familiarity": 0.0, "trust": 0.5, "fun": 0.5, "importance": 0.0}
+
+    def _safe_user_data(self, user_id: str) -> dict:
         ud = self._user_data.get(user_id)
-        if not ud:
-            return 30.0
+        if not ud or not isinstance(ud, dict):
+            return dict(self._USER_DEFAULTS)
+        for key, default in self._USER_DEFAULTS.items():
+            if key not in ud or not isinstance(ud[key], (int, float)):
+                ud[key] = default
+        return ud
+
+    def get_composite(self, user_id: str) -> float:
+        ud = self._safe_user_data(user_id)
         score = (
             ud["familiarity"] * AFFINITY_WEIGHTS["familiarity"]
             + ud["trust"] * AFFINITY_WEIGHTS["trust"]
@@ -174,9 +183,7 @@ class AffinityManager:
         return "普通"
 
     def get_user_data(self, user_id: str) -> dict:
-        return self._user_data.get(user_id, {
-            "familiarity": 0.0, "trust": 0.5, "fun": 0.5, "importance": 0.0,
-        })
+        return self._safe_user_data(user_id)
 
     def extract_inner(self, bot_reply: str) -> tuple[str, float | None, str | None]:
         m = INNER_PATTERN.search(bot_reply)

@@ -39,6 +39,7 @@ class CoreMemory:
         else:
             self._profiles = {}
 
+        need_save = False
         for uid, val in self._seed_data.items():
             uid = str(uid)
             if uid in self._profiles:
@@ -57,8 +58,10 @@ class CoreMemory:
                 "updated_at": time.time(),
             }
             logger.info(f"核心记忆：从种子数据迁移用户 {name} ({uid})")
+            need_save = True
 
-        await self.save()
+        if need_save:
+            await self.save()
 
     async def save(self):
         await self._plugin.put_kv_data("core_memory", self._profiles)
@@ -161,7 +164,7 @@ class CoreMemory:
                 text = text.split("\n", 1)[1] if "\n" in text else text[3:]
                 text = text.rsplit("```", 1)[0]
             result = json.loads(text)
-        except (json.JSONDecodeError, Exception) as e:
+        except (json.JSONDecodeError, IndexError, KeyError) as e:
             logger.warning(f"核心记忆 LLM 返回解析失败: {e}")
             return
 

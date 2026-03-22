@@ -17,9 +17,9 @@ CATEGORIES = [mood for mood, _ in MOOD_KEYWORDS]
 
 
 class MemeSelector:
-    def __init__(self, plugin_dir: str, probability: float = 0.35):
+    def __init__(self, meme_dir: str, probability: float = 0.35):
         self.probability = max(0.0, min(1.0, probability))
-        self.meme_dir = os.path.join(plugin_dir, "memes")
+        self.meme_dir = os.path.join(meme_dir, "memes")
         for cat in CATEGORIES:
             os.makedirs(os.path.join(self.meme_dir, cat), exist_ok=True)
 
@@ -57,9 +57,14 @@ class MemeSelector:
         stats = {}
         for cat in CATEGORIES:
             cat_dir = os.path.join(self.meme_dir, cat)
-            count = sum(
-                1 for f in os.listdir(cat_dir)
-                if os.path.splitext(f)[1].lower() in IMAGE_EXTS
-            ) if os.path.isdir(cat_dir) else 0
-            stats[cat] = count
+            if not os.path.isdir(cat_dir):
+                stats[cat] = 0
+                continue
+            try:
+                stats[cat] = sum(
+                    1 for f in os.listdir(cat_dir)
+                    if os.path.splitext(f)[1].lower() in IMAGE_EXTS
+                )
+            except OSError:
+                stats[cat] = 0
         return stats

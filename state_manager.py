@@ -107,6 +107,8 @@ class CirnoStateManager:
             return
 
         total = sum(candidates.values())
+        if total <= 0:
+            return
         r = random.random() * total
         cumulative = 0.0
         for state_id, weight in candidates.items():
