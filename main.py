@@ -1,5 +1,6 @@
 import logging
 import random
+import re
 from pathlib import Path
 
 from astrbot.api import AstrBotConfig
@@ -229,6 +230,11 @@ class Main(Star):
         user_msg = event.message_str or ""
         bot_reply = resp.completion_text or ""
 
+        bot_reply = re.sub(r"[（(][^）)]*[）)]", "", bot_reply).strip()
+        bot_reply = re.sub(r"\*[^*]+\*", "", bot_reply).strip()
+        if bot_reply != (resp.completion_text or ""):
+            resp.completion_text = bot_reply
+
         if self._enable_affinity and bot_reply:
             cleaned, mood_delta, affinity_delta = self.affinity.extract_delta(bot_reply)
             if cleaned != bot_reply:
@@ -274,6 +280,8 @@ class Main(Star):
     async def send_meme_after_reply(self, event: AstrMessageEvent):
         meme_path = event.get_extra("cirno_meme_path")
         if not meme_path:
+            return
+        if event.is_private_chat():
             return
         msg = MessageChain(chain=[Image.fromFileSystem(meme_path)])
         await self.context.send_message(event.unified_msg_origin, msg)
