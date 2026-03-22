@@ -1,6 +1,6 @@
 name: astrbot_plugin_cirno
-display_name: 琪露诺状态系统
-desc: "琪露诺状态系统 - 自定义prompt注入、状态机、主动发言"
+display_name: "琪露诺——baka!"
+desc: "把你的qqbot变为一只栩栩如生的baka! 包含状态机、记忆系统、好感度、主动发言等功能"
 version: v2.0.0
 author: Reisenbug
 astrbot_version: ">=4.16.0"
