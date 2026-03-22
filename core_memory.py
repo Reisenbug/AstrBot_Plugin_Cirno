@@ -1,8 +1,7 @@
 import json
-import logging
 import time
 
-logger = logging.getLogger("astrbot")
+from astrbot.api import logger
 
 CORE_MEMORY_UPDATE_PROMPT = """你是琪露诺，刚刚和一个人聊了一会儿天。
 根据下面的对话摘要，更新你对这个人的印象。

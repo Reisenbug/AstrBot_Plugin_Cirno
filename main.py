@@ -1,9 +1,8 @@
-import logging
 import random
 import re
 from pathlib import Path
 
-from astrbot.api import AstrBotConfig
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star
@@ -22,8 +21,6 @@ try:
 except ImportError:
     DEFAULT_USER_INFO = {}
     ABSOLUTE_RULES = ""
-
-logger = logging.getLogger("astrbot")
 
 
 class Main(Star):
@@ -348,7 +345,7 @@ class Main(Star):
         if event.is_private_chat():
             return
         msg = MessageChain(chain=[Image.fromFileSystem(meme_path)])
-        await self.context.send_message(event.unified_msg_origin, msg)
+        await event.send(msg)
 
     async def _proactive_check(self):
         self.state_manager.maybe_transition()

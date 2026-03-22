@@ -1,11 +1,10 @@
-import logging
 import math
 import time
 from datetime import datetime
 
 import jieba
 
-logger = logging.getLogger("astrbot")
+from astrbot.api import logger
 
 STOP_WORDS = {
     "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一",

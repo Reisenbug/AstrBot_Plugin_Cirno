@@ -1,9 +1,8 @@
 import json
-import logging
 import re
 import time
 
-logger = logging.getLogger("astrbot")
+from astrbot.api import logger
 
 AFFINITY_LEVELS = [
     (0, 15, "讨厌", "你不太喜欢这个人，态度冷淡甚至有点凶，不想搭理。"),

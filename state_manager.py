@@ -1,11 +1,10 @@
-import logging
 import random
 import time
 from datetime import datetime
 
-from .cirno_states import CIRNO_STATES, SEASON_MODIFIERS
+from astrbot.api import logger
 
-logger = logging.getLogger("astrbot")
+from .cirno_states import CIRNO_STATES, SEASON_MODIFIERS
 
 
 def _get_season() -> str:
