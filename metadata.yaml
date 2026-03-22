@@ -1,6 +1,6 @@
 name: astrbot_plugin_cirno
 display_name: "琪露诺——baka!"
-desc: "把你的bot变成一只有记忆、有心情的baka! 她会记住每个人，越聊越了解你"
+desc: "把你的bot变成一只有记忆、有心情的baka! 她会记住每个人，越聊越了解你。注意：群数量多、活跃用户多时可能影响响应速度和 token 消耗"
 version: v2.0.0
 author: Reisenbug
 astrbot_version: ">=4.16.0"
