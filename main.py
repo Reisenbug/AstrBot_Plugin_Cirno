@@ -195,8 +195,6 @@ class Main(Star):
                 "或者被某个具体的细节吸引，只追问那一个点。"
             )
 
-        req.system_prompt += ABSOLUTE_RULES
-
         if self._enable_core_memory:
             req.system_prompt += self.core_memory.build_sender_prompt(
                 sender_id, sender_nickname
@@ -217,6 +215,8 @@ class Main(Star):
                 "\n如果对方聊的话题和你记忆中的内容有关，你可以自然地提起你还记得之前聊过的事。"
                 "不要生硬地复述记忆内容，而是像真的想起来了一样随口带一嘴。"
             )
+
+        req.system_prompt += ABSOLUTE_RULES
 
         await self.put_kv_data("state_data", self.state_manager.to_dict())
 
