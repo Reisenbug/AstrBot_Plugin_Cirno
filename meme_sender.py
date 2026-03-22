@@ -18,7 +18,7 @@ CATEGORIES = [mood for mood, _ in MOOD_KEYWORDS]
 
 class MemeSelector:
     def __init__(self, plugin_dir: str, probability: float = 0.35):
-        self.probability = probability
+        self.probability = max(0.0, min(1.0, probability))
         self.meme_dir = os.path.join(plugin_dir, "memes")
         for cat in CATEGORIES:
             os.makedirs(os.path.join(self.meme_dir, cat), exist_ok=True)
@@ -40,10 +40,15 @@ class MemeSelector:
 
     def _pick_image(self, category: str) -> str | None:
         cat_dir = os.path.join(self.meme_dir, category)
-        files = [
-            f for f in os.listdir(cat_dir)
-            if os.path.splitext(f)[1].lower() in IMAGE_EXTS
-        ]
+        if not os.path.isdir(cat_dir):
+            return None
+        try:
+            files = [
+                f for f in os.listdir(cat_dir)
+                if os.path.splitext(f)[1].lower() in IMAGE_EXTS
+            ]
+        except OSError:
+            return None
         if not files:
             return None
         return os.path.join(cat_dir, random.choice(files))

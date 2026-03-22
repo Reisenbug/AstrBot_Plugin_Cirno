@@ -63,7 +63,7 @@ class CirnoStateManager:
                     f"[琪露诺状态切换] {old_label}({old_state}) -> {new_label}({self.current_state})"
                     f" | 已持续 {hours_in_state:.1f}h, 切换概率 {transition_chance:.2%}"
                 )
-            return True
+                return True
         return False
 
     @staticmethod
@@ -195,10 +195,19 @@ class CirnoStateManager:
     def from_dict(self, data: dict):
         default_state = next(iter(CIRNO_STATES))
         self.current_state = data.get("current_state", default_state)
-        self.state_entered_at = data.get("state_entered_at", time.time())
-        self.last_proactive_msg = data.get("last_proactive_msg", 0.0)
-        self.ignored_count = data.get("ignored_count", 0)
-        self.silent = data.get("silent", False)
+        try:
+            self.state_entered_at = float(data.get("state_entered_at", time.time()))
+        except (TypeError, ValueError):
+            self.state_entered_at = time.time()
+        try:
+            self.last_proactive_msg = float(data.get("last_proactive_msg", 0.0))
+        except (TypeError, ValueError):
+            self.last_proactive_msg = 0.0
+        try:
+            self.ignored_count = int(data.get("ignored_count", 0))
+        except (TypeError, ValueError):
+            self.ignored_count = 0
+        self.silent = bool(data.get("silent", False))
         if self.current_state not in CIRNO_STATES:
             self.current_state = default_state
             self.state_entered_at = time.time()

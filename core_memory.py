@@ -39,18 +39,24 @@ class CoreMemory:
         else:
             self._profiles = {}
 
-        for uid, (name, prompt) in self._seed_data.items():
+        for uid, val in self._seed_data.items():
             uid = str(uid)
-            if uid not in self._profiles:
-                self._profiles[uid] = {
-                    "name": name,
-                    "relationship": "",
-                    "traits": [],
-                    "important_events": [],
-                    "original_prompt": prompt,
-                    "updated_at": time.time(),
-                }
-                logger.info(f"核心记忆：从种子数据迁移用户 {name} ({uid})")
+            if uid in self._profiles:
+                continue
+            try:
+                name, prompt = val
+            except (TypeError, ValueError):
+                logger.warning(f"核心记忆：种子数据格式异常，跳过 uid={uid}")
+                continue
+            self._profiles[uid] = {
+                "name": name,
+                "relationship": "",
+                "traits": [],
+                "important_events": [],
+                "original_prompt": prompt,
+                "updated_at": time.time(),
+            }
+            logger.info(f"核心记忆：从种子数据迁移用户 {name} ({uid})")
 
         await self.save()
 
@@ -91,6 +97,20 @@ class CoreMemory:
                 f"\n当前和你对话的人QQ号是{sender_id}，QQ昵称是「{sender_nickname}」，"
                 f"你不认识这个人。"
             )
+
+    @property
+    def profile_count(self) -> int:
+        return len(self._profiles)
+
+    def get_interaction_count(self, user_id: str) -> int:
+        return self._counters.get(str(user_id), 0)
+
+    @property
+    def update_threshold(self) -> int:
+        return self._threshold
+
+    def get_profile(self, user_id: str) -> dict | None:
+        return self._profiles.get(str(user_id))
 
     def record_interaction(self, user_id: str):
         user_id = str(user_id)
@@ -142,7 +162,11 @@ class CoreMemory:
                 text = text.rsplit("```", 1)[0]
             result = json.loads(text)
         except (json.JSONDecodeError, Exception) as e:
-            logger.warning(f"核心记忆 LLM 返回解析失败: {e}, raw={resp.completion_text[:200]}")
+            logger.warning(f"核心记忆 LLM 返回解析失败: {e}")
+            return
+
+        if not isinstance(result, dict):
+            logger.warning("核心记忆 LLM 返回非 dict，跳过")
             return
 
         if "relationship" in result:

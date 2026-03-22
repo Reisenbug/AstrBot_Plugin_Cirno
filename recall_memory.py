@@ -36,6 +36,8 @@ def extract_keywords(text: str) -> list[str]:
 
 
 class RecallMemory:
+    SAVE_INTERVAL = 10
+
     def __init__(self, plugin, max_months: int = 4, top_k: int = 3):
         self._plugin = plugin
         self._max_months = max_months
@@ -44,17 +46,18 @@ class RecallMemory:
         self._current_month_data: list[dict] = []
         self._months_index: list[str] = []
         self._history_cache: list[dict] = []
+        self._unsaved_count = 0
 
     async def load(self):
-        self._months_index = await self._plugin.get_kv_data("recall_months", None) or []
+        raw_index = await self._plugin.get_kv_data("recall_months", None)
+        self._months_index = raw_index if isinstance(raw_index, list) else []
         now = datetime.now()
         self._current_month_key = f"recall_{now.year}_{now.month:02d}"
         if self._current_month_key not in self._months_index:
             self._months_index.append(self._current_month_key)
             await self._plugin.put_kv_data("recall_months", self._months_index)
-        self._current_month_data = (
-            await self._plugin.get_kv_data(self._current_month_key, None) or []
-        )
+        raw_month = await self._plugin.get_kv_data(self._current_month_key, None)
+        self._current_month_data = raw_month if isinstance(raw_month, list) else []
 
         self._history_cache = []
         for month_key in self._months_index:
@@ -97,7 +100,10 @@ class RecallMemory:
             "kw": keywords[:20],
         }
         self._current_month_data.append(entry)
-        await self.save_current_month()
+        self._unsaved_count += 1
+        if self._unsaved_count >= self.SAVE_INTERVAL:
+            await self.save_current_month()
+            self._unsaved_count = 0
 
     def search(self, query: str, current_user_id: str | None = None, top_k: int | None = None) -> list[dict]:
         if top_k is None:
@@ -162,9 +168,13 @@ class RecallMemory:
     async def cleanup_old_months(self):
         if len(self._months_index) <= self._max_months:
             return
-        to_remove = self._months_index[: len(self._months_index) - self._max_months]
+        to_remove = set(self._months_index[: len(self._months_index) - self._max_months])
         for key in to_remove:
             await self._plugin.delete_kv_data(key)
             logger.info(f"回忆记忆：清理过期月份 {key}")
-        self._months_index = self._months_index[len(to_remove):]
+        self._months_index = [k for k in self._months_index if k not in to_remove]
+        self._history_cache = [
+            e for e in self._history_cache
+            if f"recall_{datetime.fromtimestamp(e.get('ts', 0)).year}_{datetime.fromtimestamp(e.get('ts', 0)).month:02d}" not in to_remove
+        ]
         await self._plugin.put_kv_data("recall_months", self._months_index)

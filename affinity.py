@@ -80,17 +80,31 @@ class AffinityManager:
         self._user_data: dict[str, dict] = {}
         self._event_counters: dict[str, int] = {}
 
+    def _validate_emotion(self, data: dict) -> dict:
+        defaults = {"baseline": 0.7, "valence": 0.7, "arousal": 0.5, "vulnerability": 0.2}
+        result = {}
+        for key, default in defaults.items():
+            try:
+                val = float(data.get(key, default))
+                result[key] = max(0.0, min(1.0, val))
+            except (TypeError, ValueError):
+                result[key] = default
+        return result
+
     async def load(self):
         emotion_saved = await self._plugin.get_kv_data("cirno_emotion", None)
         if emotion_saved and isinstance(emotion_saved, dict):
-            self._emotion = emotion_saved
+            self._emotion = self._validate_emotion(emotion_saved)
         else:
             old_mood = await self._plugin.get_kv_data("cirno_mood", None)
             if old_mood is not None:
-                mood_val = float(old_mood)
-                self._emotion["valence"] = max(0.0, min(1.0, (mood_val + 10) / 20))
-                self._emotion["baseline"] = self._emotion["valence"]
-                logger.info(f"好感度迁移：旧 cirno_mood={mood_val} → valence={self._emotion['valence']:.2f}")
+                try:
+                    mood_val = float(old_mood)
+                    self._emotion["valence"] = max(0.0, min(1.0, (mood_val + 10) / 20))
+                    self._emotion["baseline"] = self._emotion["valence"]
+                    logger.info(f"好感度迁移：旧 cirno_mood={mood_val} → valence={self._emotion['valence']:.2f}")
+                except (TypeError, ValueError):
+                    logger.warning(f"好感度迁移：旧 cirno_mood 值无效，使用默认值")
 
         user_saved = await self._plugin.get_kv_data("affinity_data_v2", None)
         if user_saved and isinstance(user_saved, dict):
@@ -99,20 +113,23 @@ class AffinityManager:
             old_data = await self._plugin.get_kv_data("affinity_data", None)
             if old_data and isinstance(old_data, dict):
                 for uid, entry in old_data.items():
-                    old_val = entry.get("value", 50.0) if isinstance(entry, dict) else 50.0
-                    normalized = old_val / 100.0
-                    self._user_data[uid] = {
-                        "familiarity": min(1.0, normalized * 0.8),
-                        "trust": max(0.0, min(1.0, 0.3 + normalized * 0.4)),
-                        "fun": 0.5,
-                        "importance": max(0.0, min(1.0, normalized * 0.3)),
-                        "last_ts": entry.get("last_ts", time.time()) if isinstance(entry, dict) else time.time(),
-                    }
+                    try:
+                        old_val = entry.get("value", 50.0) if isinstance(entry, dict) else 50.0
+                        normalized = float(old_val) / 100.0
+                        self._user_data[uid] = {
+                            "familiarity": min(1.0, normalized * 0.8),
+                            "trust": max(0.0, min(1.0, 0.3 + normalized * 0.4)),
+                            "fun": 0.5,
+                            "importance": max(0.0, min(1.0, normalized * 0.3)),
+                            "last_ts": entry.get("last_ts", time.time()) if isinstance(entry, dict) else time.time(),
+                        }
+                    except (TypeError, ValueError):
+                        continue
                 logger.info(f"好感度迁移：旧格式 → 四维好感度，共 {len(self._user_data)} 人")
 
         counters_saved = await self._plugin.get_kv_data("affinity_event_counters", None)
         if counters_saved and isinstance(counters_saved, dict):
-            self._event_counters = counters_saved
+            self._event_counters = {k: v for k, v in counters_saved.items() if isinstance(v, (int, float))}
 
         logger.info(
             f"好感度系统已加载：{len(self._user_data)} 人，"

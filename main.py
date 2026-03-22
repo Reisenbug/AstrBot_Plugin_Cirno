@@ -265,11 +265,11 @@ class Main(Star):
             logger.info(f"[琪露诺回忆归档] {sender_name}({sender_id}): {user_msg[:30]}")
 
         if self._enable_core_memory:
-            count = self.core_memory._counters.get(sender_id, 0)
+            count = self.core_memory.get_interaction_count(sender_id)
             if self.core_memory.should_update(sender_id):
                 logger.info(
                     f"[琪露诺核心记忆] 触发LLM更新 {sender_name}({sender_id}), "
-                    f"交互计数={count}/{self.core_memory._threshold}"
+                    f"交互计数={count}/{self.core_memory.update_threshold}"
                 )
                 recent_summary = f"{sender_name}说：「{user_msg}」\n琪露诺回答：「{bot_reply}」"
                 await self.core_memory.update_profile_via_llm(
@@ -327,7 +327,7 @@ class Main(Star):
         )
 
         if result.get("memory") and self._enable_core_memory:
-            profile = self.core_memory._profiles.get(user_id)
+            profile = self.core_memory.get_profile(user_id)
             if profile:
                 events = profile.get("important_events", [])
                 events.append(result["memory"])
@@ -502,7 +502,7 @@ class Main(Star):
             f"沉默模式: {'是' if info['silent'] else '否'}",
             f"已记录群聊: {len(self._group_sessions)}个",
             f"Cron Job: {'已注册' if self._cron_job_id else '未注册'}",
-            f"核心记忆: {'启用' if self._enable_core_memory else '禁用'} ({len(self.core_memory._profiles)}人)",
+            f"核心记忆: {'启用' if self._enable_core_memory else '禁用'} ({self.core_memory.profile_count}人)",
             f"回忆记忆: {'启用' if self._enable_recall_memory else '禁用'}",
             f"好感度系统: {'启用' if self._enable_affinity else '禁用'}",
         ]
