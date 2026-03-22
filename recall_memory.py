@@ -130,6 +130,15 @@ class RecallMemory:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [entry for _, entry in scored[:top_k]]
 
+    def get_recent_by_user(self, user_id: str, limit: int = 15) -> list[dict]:
+        user_id = str(user_id)
+        entries = [
+            e for e in self._history_cache + self._current_month_data
+            if e.get("uid") == user_id
+        ]
+        entries.sort(key=lambda e: e.get("ts", 0), reverse=True)
+        return entries[:limit]
+
     def build_recall_prompt(self, memories: list[dict]) -> str:
         if not memories:
             return ""

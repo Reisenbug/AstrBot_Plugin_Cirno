@@ -236,21 +236,29 @@ class Main(Star):
             resp.completion_text = bot_reply
 
         if self._enable_affinity and bot_reply:
-            cleaned, mood_delta, affinity_delta = self.affinity.extract_delta(bot_reply)
+            cleaned, valence_shift, reason = self.affinity.extract_inner(bot_reply)
             if cleaned != bot_reply:
                 resp.completion_text = cleaned
                 bot_reply = cleaned
-            from .cirno_states import CIRNO_STATES
-            cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
-            mood_adj = self.affinity.update_mood(mood_delta, cat)
-            aff_adj = self.affinity.update_affinity(sender_id, affinity_delta, cat)
-            logger.info(
-                f"[琪露诺心情] {self.affinity.mood:.1f}({'+' if mood_adj > 0 else ''}{mood_adj:.1f}) "
-                f"等级={self.affinity.get_mood_level()} | "
-                f"[好感度] {sender_name}({sender_id}): {self.affinity.get(sender_id):.1f}"
-                f"({'+' if aff_adj > 0 else ''}{aff_adj:.1f}) "
-                f"等级={self.affinity.get_level(sender_id)}"
-            )
+
+            if valence_shift is not None:
+                from .cirno_states import CIRNO_STATES
+                cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
+                self.affinity.update_emotion(valence_shift, cat)
+                self.affinity.update_affinity(sender_id, valence_shift)
+                logger.info(
+                    f"[琪露诺情绪] v={self.affinity.valence:.2f} a={self.affinity.arousal:.2f} "
+                    f"vuln={self.affinity.vulnerability:.2f} shift={valence_shift:.2f} "
+                    f"reason={reason} | "
+                    f"[好感度] {sender_name}({sender_id}): "
+                    f"composite={self.affinity.get_composite(sender_id):.1f} "
+                    f"等级={self.affinity.get_level(sender_id)}"
+                )
+
+                count = self.affinity.increment_event_counter(sender_id)
+                if count >= 30:
+                    self.affinity.reset_event_counter(sender_id)
+                    await self._evaluate_key_event(sender_id, sender_name)
 
         if not user_msg or not bot_reply:
             return
@@ -275,6 +283,62 @@ class Main(Star):
             meme_path = self.meme_selector.select(bot_reply)
             if meme_path:
                 event.set_extra("cirno_meme_path", meme_path)
+
+    async def _evaluate_key_event(self, user_id: str, nickname: str):
+        recent = self.recall_memory.get_recent_by_user(user_id, limit=15)
+        if not recent:
+            return
+
+        msg_lines = []
+        for entry in recent:
+            name = entry.get("name", "?")
+            msg_lines.append(f"{name}：{entry.get('msg', '')}")
+            msg_lines.append(f"琪露诺：{entry.get('reply', '')}")
+        messages_text = "\n".join(msg_lines)
+
+        prompt_text = self.affinity.build_key_event_prompt(nickname, messages_text)
+
+        try:
+            provider_id = self.context.get_all_providers()[0].meta().id
+        except Exception:
+            logger.warning("关键事件评估：无可用 LLM Provider")
+            return
+
+        try:
+            llm_resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt_text,
+                system_prompt="你是一个JSON生成器，只输出合法的JSON或null，不要输出其他任何内容。",
+            )
+        except Exception as e:
+            logger.error(f"关键事件评估 LLM 调用失败: {e}")
+            return
+
+        if not llm_resp or not llm_resp.completion_text:
+            return
+
+        result = self.affinity.parse_key_event_result(llm_resp.completion_text)
+        if not result:
+            logger.info(f"[琪露诺关键事件] {nickname}({user_id}): 无关键事件")
+            return
+
+        self.affinity.update_key_event(user_id, result["dimension"], result["delta"])
+        logger.info(
+            f"[琪露诺关键事件] {nickname}({user_id}): "
+            f"event={result['event']}, dim={result['dimension']}, "
+            f"delta={result['delta']:+.2f}"
+        )
+
+        if result.get("memory") and self._enable_core_memory:
+            profile = self.core_memory._profiles.get(user_id)
+            if profile:
+                events = profile.get("important_events", [])
+                events.append(result["memory"])
+                profile["important_events"] = events[-3:]
+                await self.core_memory.save()
+                logger.info(f"[琪露诺关键事件] 写入核心记忆: {result['memory']}")
+
+        await self.affinity.save()
 
     @filter.after_message_sent()
     async def send_meme_after_reply(self, event: AstrMessageEvent):
@@ -351,15 +415,20 @@ class Main(Star):
         if not llm_resp or not llm_resp.completion_text:
             return
 
-        msg = MessageChain().message(llm_resp.completion_text)
+        text = llm_resp.completion_text
+        if self._enable_affinity:
+            cleaned, _, _ = self.affinity.extract_inner(text)
+            text = cleaned
+
+        msg = MessageChain().message(text)
         await self.context.send_message(session_str, msg)
         logger.info(
             f"琪露诺主动发言已发送到 {session_str}: "
-            f"{llm_resp.completion_text[:50]}..."
+            f"{text[:50]}..."
         )
 
         if self._enable_meme:
-            meme_path = self.meme_selector.select(llm_resp.completion_text)
+            meme_path = self.meme_selector.select(text)
             if meme_path:
                 meme_msg = MessageChain(chain=[Image.fromFileSystem(meme_path)])
                 await self.context.send_message(session_str, meme_msg)
@@ -441,7 +510,19 @@ class Main(Star):
             f"好感度系统: {'启用' if self._enable_affinity else '禁用'}",
         ]
         if self._enable_affinity:
-            lines.append(f"当前心情: {self.affinity.get_mood_level()}({self.affinity.mood:.0f})")
+            sender_id = str(event.get_sender_id())
+            emo = self.affinity.get_debug_info(sender_id)
+            lines.append(
+                f"情绪: valence={emo['valence']:.2f} arousal={emo['arousal']:.2f} "
+                f"vulnerability={emo['vulnerability']:.2f} baseline={emo['baseline']:.2f}"
+            )
+            if "user" in emo:
+                u = emo["user"]
+                lines.append(
+                    f"你的好感度: {u['level']}({u['composite']:.0f}/100) "
+                    f"[熟悉={u['familiarity']:.2f} 信任={u['trust']:.2f} "
+                    f"有趣={u['fun']:.2f} 重要={u['importance']:.2f}]"
+                )
         yield event.plain_result("\n".join(lines))
 
     async def terminate(self):
