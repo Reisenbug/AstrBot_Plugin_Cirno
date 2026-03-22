@@ -107,6 +107,12 @@
         "type": "int",
         "default": 3,
         "hint": "每次对话最多检索几条相关回忆"
+      },
+      "allow_stranger_profile": {
+        "description": "允许陌生人自动建立档案",
+        "type": "bool",
+        "default": true,
+        "hint": "关闭后只有种子数据中的用户会被核心记忆记住"
       }
     }
   },
@@ -118,18 +124,6 @@
         "description": "启用好感度系统",
         "type": "bool",
         "default": true
-      },
-      "decay_rate": {
-        "description": "好感度自然衰减速率",
-        "type": "float",
-        "default": 0.5,
-        "hint": "每次交互时好感度向50衰减的速度，0-2之间"
-      },
-      "mood_decay_rate": {
-        "description": "心情自然衰减速率",
-        "type": "float",
-        "default": 1.0,
-        "hint": "每次交互时心情向0衰减的速度，0-3之间。心情衰减比好感度快"
       }
     }
   },

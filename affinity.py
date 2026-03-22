@@ -66,10 +66,8 @@ dimension 说明：trust=信任相关，fun=有趣相关，importance=重要性�
 
 
 class AffinityManager:
-    def __init__(self, plugin, decay_rate: float = 0.5, mood_decay_rate: float = 1.0):
+    def __init__(self, plugin):
         self._plugin = plugin
-        self._decay_rate = decay_rate
-        self._mood_decay_rate = mood_decay_rate
 
         self._emotion = {
             "baseline": 0.7,

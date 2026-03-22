@@ -66,18 +66,36 @@ class CoreMemory:
     async def save(self):
         await self._plugin.put_kv_data("core_memory", self._profiles)
 
-    def build_people_prompt(self) -> str:
+    MAX_RELATED_PEOPLE = 5
+
+    def build_people_prompt(self, user_msg: str = "", sender_id: str = "") -> str:
+        if not self._profiles:
+            return ""
+        if not user_msg:
+            return ""
+        from .recall_memory import extract_keywords
+        keywords = set(extract_keywords(user_msg))
+        if not keywords:
+            return ""
+
         lines = []
         for uid, p in self._profiles.items():
+            if uid == sender_id:
+                continue
             name = p.get("name", uid)
+            searchable = name + " " + p.get("relationship", "") + " " + " ".join(p.get("traits", []))
+            if not (keywords & set(extract_keywords(searchable))):
+                continue
             rel = p.get("relationship", "")
             if rel:
                 lines.append(f"- {name}(QQ{uid})：{rel}")
             else:
                 lines.append(f"- {name}(QQ{uid})")
+            if len(lines) >= self.MAX_RELATED_PEOPLE:
+                break
         if not lines:
             return ""
-        return "【你认识的人】\n" + "\n".join(lines)
+        return "【你想起了一些可能相关的人】\n" + "\n".join(lines)
 
     def build_sender_prompt(self, sender_id: str, sender_nickname: str) -> str:
         sender_id = str(sender_id)

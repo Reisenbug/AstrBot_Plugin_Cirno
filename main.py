@@ -44,6 +44,7 @@ class Main(Star):
 
         self._enable_core_memory = memory_cfg.get("enable_core_memory", True)
         self._enable_recall_memory = memory_cfg.get("enable_recall_memory", True)
+        self._allow_stranger_profile = memory_cfg.get("allow_stranger_profile", True)
 
         self.core_memory = CoreMemory(
             plugin=self,
@@ -58,11 +59,7 @@ class Main(Star):
 
         affinity_cfg = config.get("affinity_settings", {})
         self._enable_affinity = affinity_cfg.get("enable", True)
-        self.affinity = AffinityManager(
-            plugin=self,
-            decay_rate=affinity_cfg.get("decay_rate", 0.5),
-            mood_decay_rate=affinity_cfg.get("mood_decay_rate", 1.0),
-        )
+        self.affinity = AffinityManager(plugin=self)
 
         meme_cfg = config.get("meme_settings", {})
         self._enable_meme = meme_cfg.get("enable", True)
@@ -115,7 +112,7 @@ class Main(Star):
 
         proactive_cfg = self.config.get("proactive_settings", {})
         if proactive_cfg.get("enable", True):
-            interval = proactive_cfg.get("check_interval_minutes", 10)
+            interval = max(1, int(proactive_cfg.get("check_interval_minutes", 10)))
             job = await self.context.cron_manager.add_basic_job(
                 name="cirno_proactive_check",
                 cron_expression=f"*/{interval} * * * *",
@@ -149,7 +146,8 @@ class Main(Star):
         )
 
         if self._enable_core_memory:
-            people_prompt = self.core_memory.build_people_prompt()
+            user_msg_text = event.message_str or ""
+            people_prompt = self.core_memory.build_people_prompt(user_msg_text, sender_id)
             if people_prompt:
                 req.system_prompt += f"\n{people_prompt}"
         else:
@@ -265,16 +263,18 @@ class Main(Star):
             logger.info(f"[琪露诺回忆归档] {sender_name}({sender_id}): {user_msg[:30]}")
 
         if self._enable_core_memory:
-            count = self.core_memory.get_interaction_count(sender_id)
-            if self.core_memory.should_update(sender_id):
-                logger.info(
-                    f"[琪露诺核心记忆] 触发LLM更新 {sender_name}({sender_id}), "
-                    f"交互计数={count}/{self.core_memory.update_threshold}"
-                )
-                recent_summary = f"{sender_name}说：「{user_msg}」\n琪露诺回答：「{bot_reply}」"
-                await self.core_memory.update_profile_via_llm(
-                    sender_id, recent_summary, self.context, nickname=sender_name
-                )
+            is_known = self.core_memory.get_profile(sender_id) is not None
+            if is_known or self._allow_stranger_profile:
+                count = self.core_memory.get_interaction_count(sender_id)
+                if self.core_memory.should_update(sender_id):
+                    logger.info(
+                        f"[琪露诺核心记忆] 触发LLM更新 {sender_name}({sender_id}), "
+                        f"交互计数={count}/{self.core_memory.update_threshold}"
+                    )
+                    recent_summary = f"{sender_name}说：「{user_msg}」\n琪露诺回答：「{bot_reply}」"
+                    await self.core_memory.update_profile_via_llm(
+                        sender_id, recent_summary, self.context, nickname=sender_name
+                    )
 
         if self._enable_meme:
             meme_path = self.meme_selector.select(bot_reply)
@@ -379,7 +379,7 @@ class Main(Star):
         base_system_prompt = persona.get("prompt", "") if persona else ""
 
         if self._enable_core_memory:
-            people_prompt = self.core_memory.build_people_prompt()
+            people_prompt = self.core_memory.build_people_prompt(topic)
         else:
             people_prompt = ""
 
