@@ -51,7 +51,7 @@ KEY_EVENT_PROMPT = """你是琪露诺，幻想乡最强的冰精灵。
 {messages}
 
 如果有关键事件，用JSON格式输出：
-{{"event": "事件的简短描述", "dimension": "受影响的好感维度（trust/fun/importance）", "delta": 0.1, "memory": "你想记住的一句话（用琪露诺视角）"}}
+{{"event": "事件的简短描述", "dimension": "受影响的好感维度（trust/fun/importance）", "delta": 0.1, "memory": "用平静内省的语气记录这件事，不要带口癖、语气词、emoji"}}
 
 delta 范围 -0.15 ~ +0.15，正面事件为正，负面事件为负。
 dimension 说明：trust=信任相关，fun=有趣相关，importance=重要性相关。
