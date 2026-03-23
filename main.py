@@ -288,6 +288,18 @@ class Main(Star):
             if meme_path:
                 event.set_extra("cirno_meme_path", meme_path)
 
+        if (
+            self._enable_affinity
+            and event.session.message_type == MessageType.GROUP_MESSAGE
+        ):
+            valence = self.affinity.valence
+            chance = 0.01 + max(0, (0.5 - valence)) * 0.08
+            if random.random() < chance:
+                event.set_extra("cirno_poke", True)
+                logger.info(
+                    f"[琪露诺戳一戳] 触发! valence={valence:.2f} chance={chance:.2%}"
+                )
+
     async def _evaluate_key_event(self, user_id: str, nickname: str):
         recent = self.recall_memory.get_recent_by_user(user_id, limit=15)
         if not recent:
@@ -353,6 +365,14 @@ class Main(Star):
             return
         msg = MessageChain(chain=[Image.fromFileSystem(meme_path)])
         await event.send(msg)
+
+    @filter.after_message_sent()
+    async def poke_after_reply(self, event: AstrMessageEvent):
+        if not event.get_extra("cirno_poke"):
+            return
+        sender_id = str(event.get_sender_id())
+        poke = Poke(type="126", id=sender_id)
+        await event.send(MessageChain([poke]))
 
     async def _proactive_check(self):
         self.state_manager.maybe_transition()
