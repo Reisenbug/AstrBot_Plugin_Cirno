@@ -96,11 +96,11 @@
         "default": 15,
         "hint": "与某用户对话多少条后触发 LLM 更新印象"
       },
-      "recall_memory_max_months": {
-        "description": "回忆记忆保留月数",
+      "buffer_limit": {
+        "description": "回忆压缩阈值",
         "type": "int",
-        "default": 6,
-        "hint": "保留最近几个月的对话记录"
+        "default": 15,
+        "hint": "每攒满多少轮对话触发一次 LLM 摘要压缩"
       },
       "recall_search_top_k": {
         "description": "回忆检索数量",

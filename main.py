@@ -55,7 +55,7 @@ class Main(Star):
         )
         self.recall_memory = RecallMemory(
             plugin=self,
-            max_months=memory_cfg.get("recall_memory_max_months", 6),
+            buffer_limit=memory_cfg.get("buffer_limit", 15),
             top_k=memory_cfg.get("recall_search_top_k", 3),
         )
 
@@ -105,8 +105,10 @@ class Main(Star):
         if self._enable_core_memory:
             await self.core_memory.load()
         if self._enable_recall_memory:
+            self.recall_memory.set_llm_generate(self._recall_llm_generate)
+            if self._enable_affinity:
+                self.recall_memory.set_key_event_callback(self._on_buffer_key_event)
             await self.recall_memory.load()
-            await self.recall_memory.cleanup_old_months()
 
         if self._enable_meme:
             stats = self.meme_selector.get_stats()
@@ -179,7 +181,7 @@ class Main(Star):
                     logger.info(
                         f"[琪露诺回忆检索] 命中 {len(memories)} 条: "
                         + ", ".join(
-                            f"{m.get('name', '?')}「{m.get('msg', '')[:20]}」"
+                            f"「{m.get('text', '')[:30]}」"
                             for m in memories
                         )
                     )
@@ -257,10 +259,7 @@ class Main(Star):
                     f"等级={self.affinity.get_level(sender_id)}"
                 )
 
-                count = self.affinity.increment_event_counter(sender_id)
-                if count >= 30:
-                    self.affinity.reset_event_counter(sender_id)
-                    await self._evaluate_key_event(sender_id, sender_name)
+                self.affinity.increment_event_counter(sender_id)
 
         if not user_msg or not bot_reply:
             return
@@ -300,13 +299,24 @@ class Main(Star):
                     f"[琪露诺戳一戳] 触发! valence={valence:.2f} chance={chance:.2%}"
                 )
 
-    async def _evaluate_key_event(self, user_id: str, nickname: str):
-        recent = self.recall_memory.get_recent_by_user(user_id, limit=15)
-        if not recent:
+    async def _recall_llm_generate(self, prompt: str):
+        try:
+            provider_id = self.context.get_all_providers()[0].meta().id
+        except Exception:
+            logger.warning("回忆记忆：无可用 LLM Provider")
+            return None
+        return await self.context.llm_generate(
+            chat_provider_id=provider_id,
+            prompt=prompt,
+            system_prompt="你是一个记忆压缩器，只输出压缩后的记忆文本，不要输出其他任何内容。",
+        )
+
+    async def _on_buffer_key_event(self, user_id: str, nickname: str, entries: list[dict]):
+        if not entries:
             return
 
         msg_lines = []
-        for entry in recent:
+        for entry in entries:
             name = entry.get("name", "?")
             msg_lines.append(f"{name}：{entry.get('msg', '')}")
             msg_lines.append(f"琪露诺：{entry.get('reply', '')}")
@@ -567,19 +577,29 @@ class Main(Star):
             if not self._enable_recall_memory:
                 yield event.plain_result("回忆记忆未启用")
                 return
-            all_entries = self.recall_memory._history_cache + self.recall_memory._current_month_data
-            if not all_entries:
-                yield event.plain_result("还没有任何回忆记录")
-                return
-            recent = sorted(all_entries, key=lambda e: e.get("ts", 0), reverse=True)[:15]
-            lines = ["【最近15条回忆】"]
-            for e in recent:
-                ts = datetime.fromtimestamp(e.get("ts", 0)).strftime("%m-%d %H:%M")
-                name = e.get("name", "?")
-                msg = e.get("msg", "")[:40]
-                reply = e.get("reply", "")[:40]
-                lines.append(f"[{ts}] {name}: {msg}\n  → {reply}")
-            lines.append(f"\n总计: {len(all_entries)}条回忆")
+            stats = self.recall_memory.get_stats()
+            lines = [
+                f"【回忆记忆状态】",
+                f"缓冲区: {stats['buffer']}条",
+                f"L1摘要: {stats['summaries']}条",
+                f"L2浓缩: {stats['digests']}条",
+                f"全局计数: {stats['global_count']}",
+            ]
+            buffer_entries = self.recall_memory.get_buffer_entries()
+            if buffer_entries:
+                lines.append("\n【最近缓冲区对话】")
+                for e in buffer_entries[-10:]:
+                    ts = datetime.fromtimestamp(e.get("ts", 0)).strftime("%m-%d %H:%M")
+                    name = e.get("name", "?")
+                    msg = e.get("msg", "")[:40]
+                    reply = e.get("reply", "")[:40]
+                    lines.append(f"[{ts}] {name}: {msg}\n  → {reply}")
+            summaries = self.recall_memory._summaries
+            if summaries:
+                lines.append("\n【L1摘要】")
+                for s in summaries[-5:]:
+                    ts = datetime.fromtimestamp(s.get("ts", 0)).strftime("%m-%d %H:%M")
+                    lines.append(f"[{ts}] {s.get('text', '')[:60]}")
             yield event.plain_result("\n".join(lines))
             return
 
@@ -638,7 +658,7 @@ class Main(Star):
         if self._enable_core_memory:
             await self.core_memory.save()
         if self._enable_recall_memory:
-            await self.recall_memory.save_current_month()
+            await self.recall_memory.save()
         if self._cron_job_id:
             try:
                 await self.context.cron_manager.delete_job(self._cron_job_id)
