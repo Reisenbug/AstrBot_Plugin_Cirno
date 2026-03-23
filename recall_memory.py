@@ -90,6 +90,8 @@ class RecallMemory:
             self._current_month_data = raw if isinstance(raw, list) else []
 
         keywords = extract_keywords(user_msg + " " + bot_reply)
+        if len(keywords) < 3:
+            return
         entry = {
             "ts": time.time(),
             "uid": str(user_id),
