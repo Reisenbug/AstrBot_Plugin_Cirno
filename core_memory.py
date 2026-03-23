@@ -42,6 +42,13 @@ class CoreMemory:
         else:
             self._profiles = {}
 
+        migrated = await self._plugin.get_kv_data("core_memory_events_cleaned", None)
+        if not migrated:
+            for p in self._profiles.values():
+                p["important_events"] = []
+            await self._plugin.put_kv_data("core_memory_events_cleaned", True)
+            logger.info("核心记忆：一次性清空旧 important_events 数据")
+
         need_save = False
         for uid, val in self._seed_data.items():
             uid = str(uid)
