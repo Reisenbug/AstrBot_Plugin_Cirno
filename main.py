@@ -520,6 +520,7 @@ class Main(Star):
         if poke.target_id() and str(poke.target_id()) != bot_id:
             return
 
+        event.stop_event()
         sender_id = str(event.get_sender_id())
 
         from .cirno_states import CIRNO_STATES
