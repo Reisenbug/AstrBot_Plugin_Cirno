@@ -527,10 +527,17 @@ class Main(Star):
                     f"[熟悉={u['familiarity']:.2f} 信任={u['trust']:.2f} "
                     f"有趣={u['fun']:.2f} 重要={u['importance']:.2f}]"
                 )
-        if self._show_full_prompt and self._last_full_prompt:
-            lines.append("\n【最近一次完整提示词】")
-            lines.append(self._last_full_prompt)
         yield event.plain_result("\n".join(lines))
+
+    @filter.command("琪露诺提示词")
+    async def debug_prompt(self, event: AstrMessageEvent):
+        if not self._show_full_prompt:
+            yield event.plain_result("未开启，请在面板「调试设置」中启用「显示完整提示词」")
+            return
+        if not self._last_full_prompt:
+            yield event.plain_result("还没有记录到提示词，先聊一句再来看")
+            return
+        yield event.plain_result(self._last_full_prompt)
 
     @filter.command("琪露诺记忆")
     async def debug_memory(self, event: AstrMessageEvent, target: str = ""):
