@@ -539,6 +539,19 @@ class Main(Star):
 
         yield event.plain_result(random.choice(pool))
 
+        if random.random() < 0.2:
+            bot = getattr(event, "bot", None)
+            group_id = getattr(event.session, "session_id", None)
+            if bot and group_id:
+                try:
+                    await bot.call_action(
+                        "group_poke",
+                        group_id=int(group_id),
+                        user_id=int(sender_id),
+                    )
+                except Exception:
+                    pass
+
     @filter.command("琪露诺状态")
     async def debug_state(self, event: AstrMessageEvent):
         info = self.state_manager.get_debug_info()
