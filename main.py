@@ -599,7 +599,13 @@ class Main(Star):
                 lines.append("\n【L1摘要】")
                 for s in summaries[-5:]:
                     ts = datetime.fromtimestamp(s.get("ts", 0)).strftime("%m-%d %H:%M")
-                    lines.append(f"[{ts}] {s.get('text', '')[:60]}")
+                    lines.append(f"[{ts}] {s.get('text', '')}")
+            digests = self.recall_memory._digests
+            if digests:
+                lines.append("\n【L2浓缩】")
+                for d in digests[-3:]:
+                    ts = datetime.fromtimestamp(d.get("ts", 0)).strftime("%m-%d %H:%M")
+                    lines.append(f"[{ts}] {d.get('text', '')}")
             yield event.plain_result("\n".join(lines))
             return
 
