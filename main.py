@@ -529,6 +529,7 @@ class Main(Star):
                 )
         yield event.plain_result("\n".join(lines))
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("琪露诺提示词")
     async def debug_prompt(self, event: AstrMessageEvent):
         if not self._show_full_prompt:
