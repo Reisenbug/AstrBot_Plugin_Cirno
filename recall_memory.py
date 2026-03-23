@@ -92,8 +92,27 @@ class RecallMemory:
         keywords = extract_keywords(user_msg + " " + bot_reply)
         if len(keywords) < 3:
             return
+        kw_set = set(keywords[:20])
+        now_ts = time.time()
+        for i in range(len(self._current_month_data) - 1, max(len(self._current_month_data) - 20, -1), -1):
+            prev = self._current_month_data[i]
+            if prev.get("uid") != str(user_id):
+                continue
+            if now_ts - prev.get("ts", 0) > 1800:
+                break
+            prev_kw = set(prev.get("kw", []))
+            if not prev_kw:
+                continue
+            overlap = len(kw_set & prev_kw)
+            if overlap / max(len(kw_set), len(prev_kw)) >= 0.6:
+                if len(kw_set) >= len(prev_kw):
+                    prev["msg"] = user_msg[:200]
+                    prev["reply"] = bot_reply[:200]
+                    prev["kw"] = keywords[:20]
+                    prev["ts"] = now_ts
+                return
         entry = {
-            "ts": time.time(),
+            "ts": now_ts,
             "uid": str(user_id),
             "name": user_name,
             "msg": user_msg[:200],
