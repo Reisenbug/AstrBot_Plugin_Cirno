@@ -671,8 +671,7 @@ class Main(Star):
         for uid, p in self.core_memory._profiles.items():
             name = p.get("name", uid)
             rel = p.get("relationship", "")
-            summary = rel[:30] + "..." if len(rel) > 30 else rel
-            suffix = f" — {summary}" if summary else ""
+            suffix = f" — {rel}" if rel else ""
             if self._enable_affinity:
                 level = self.affinity.get_level(uid)
                 suffix += f" [{level}]"
