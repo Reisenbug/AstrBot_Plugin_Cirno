@@ -1,5 +1,7 @@
 import random
 import re
+import time
+from datetime import datetime
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import filter, AstrMessageEvent
@@ -520,6 +522,76 @@ class Main(Star):
                     f"[熟悉={u['familiarity']:.2f} 信任={u['trust']:.2f} "
                     f"有趣={u['fun']:.2f} 重要={u['importance']:.2f}]"
                 )
+        yield event.plain_result("\n".join(lines))
+
+    @filter.command("琪露诺记忆")
+    async def debug_memory(self, event: AstrMessageEvent, target: str = ""):
+        target = target.strip()
+        if target == "回忆":
+            if not self._enable_recall_memory:
+                yield event.plain_result("回忆记忆未启用")
+                return
+            all_entries = self.recall_memory._history_cache + self.recall_memory._current_month_data
+            if not all_entries:
+                yield event.plain_result("还没有任何回忆记录")
+                return
+            recent = sorted(all_entries, key=lambda e: e.get("ts", 0), reverse=True)[:15]
+            lines = ["【最近15条回忆】"]
+            for e in recent:
+                ts = datetime.fromtimestamp(e.get("ts", 0)).strftime("%m-%d %H:%M")
+                name = e.get("name", "?")
+                msg = e.get("msg", "")[:40]
+                reply = e.get("reply", "")[:40]
+                lines.append(f"[{ts}] {name}: {msg}\n  → {reply}")
+            lines.append(f"\n总计: {len(all_entries)}条回忆")
+            yield event.plain_result("\n".join(lines))
+            return
+
+        if not self._enable_core_memory:
+            yield event.plain_result("核心记忆未启用")
+            return
+
+        if target:
+            profile = None
+            for uid, p in self.core_memory._profiles.items():
+                if uid == target or p.get("name", "") == target:
+                    profile = (uid, p)
+                    break
+            if not profile:
+                yield event.plain_result(f"没有找到「{target}」的记忆")
+                return
+            uid, p = profile
+            lines = [f"【{p.get('name', uid)}】(QQ{uid})"]
+            if p.get("relationship"):
+                lines.append(f"印象: {p['relationship']}")
+            if p.get("traits"):
+                lines.append(f"特征: {'、'.join(p['traits'])}")
+            if p.get("important_events"):
+                lines.append("重要事件:")
+                for ev in p["important_events"]:
+                    lines.append(f"  - {ev}")
+            updated = p.get("updated_at")
+            if updated:
+                lines.append(f"更新于: {datetime.fromtimestamp(updated).strftime('%Y-%m-%d %H:%M')}")
+            if self._enable_affinity:
+                composite = self.affinity.get_composite(uid)
+                level = self.affinity.get_level(uid)
+                lines.append(f"好感度: {level}({composite:.0f}/100)")
+            yield event.plain_result("\n".join(lines))
+            return
+
+        lines = ["【琪露诺的记忆】"]
+        for uid, p in self.core_memory._profiles.items():
+            name = p.get("name", uid)
+            rel = p.get("relationship", "")
+            summary = rel[:30] + "..." if len(rel) > 30 else rel
+            suffix = f" — {summary}" if summary else ""
+            if self._enable_affinity:
+                level = self.affinity.get_level(uid)
+                suffix += f" [{level}]"
+            lines.append(f"· {name}(QQ{uid}){suffix}")
+        lines.append(f"\n共 {self.core_memory.profile_count} 人")
+        lines.append("用法: 琪露诺记忆 <名字/QQ号> | 琪露诺记忆 回忆")
         yield event.plain_result("\n".join(lines))
 
     async def terminate(self):
