@@ -59,6 +59,9 @@ class Main(Star):
             top_k=memory_cfg.get("recall_search_top_k", 3),
         )
 
+        debug_cfg = config.get("debug_settings", {})
+        self._show_full_prompt = debug_cfg.get("show_full_prompt", False)
+
         affinity_cfg = config.get("affinity_settings", {})
         self._enable_affinity = affinity_cfg.get("enable", True)
         self.affinity = AffinityManager(plugin=self)
@@ -73,6 +76,7 @@ class Main(Star):
 
         self._group_sessions: set[str] = set()
         self._cron_job_id: str | None = None
+        self._last_full_prompt: str = ""
 
     async def initialize(self):
         saved = await self.get_kv_data("state_data", None)
@@ -217,6 +221,7 @@ class Main(Star):
             )
 
         req.system_prompt += ABSOLUTE_RULES
+        self._last_full_prompt = req.system_prompt
 
         await self.put_kv_data("state_data", self.state_manager.to_dict())
 
@@ -522,6 +527,9 @@ class Main(Star):
                     f"[熟悉={u['familiarity']:.2f} 信任={u['trust']:.2f} "
                     f"有趣={u['fun']:.2f} 重要={u['importance']:.2f}]"
                 )
+        if self._show_full_prompt and self._last_full_prompt:
+            lines.append("\n【最近一次完整提示词】")
+            lines.append(self._last_full_prompt)
         yield event.plain_result("\n".join(lines))
 
     @filter.command("琪露诺记忆")

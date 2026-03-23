@@ -116,6 +116,18 @@
       }
     }
   },
+  "debug_settings": {
+    "description": "调试设置",
+    "type": "object",
+    "items": {
+      "show_full_prompt": {
+        "description": "显示完整提示词",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后「琪露诺状态」指令会额外输出发送给 LLM 的完整 system prompt，用于排查句式固化等问题"
+      }
+    }
+  },
   "affinity_settings": {
     "description": "好感度设置",
     "type": "object",
