@@ -380,9 +380,21 @@ class Main(Star):
     async def poke_after_reply(self, event: AstrMessageEvent):
         if not event.get_extra("cirno_poke"):
             return
-        sender_id = str(event.get_sender_id())
-        poke = Poke(type="126", id=sender_id)
-        await event.send(MessageChain([poke]))
+        bot = getattr(event, "bot", None)
+        if not bot:
+            return
+        sender_id = int(event.get_sender_id())
+        group_id = getattr(event.session, "session_id", None)
+        if not group_id:
+            return
+        try:
+            await bot.call_action(
+                "group_poke",
+                group_id=int(group_id),
+                user_id=sender_id,
+            )
+        except Exception as e:
+            logger.debug(f"戳一戳发送失败: {e}")
 
     async def _proactive_check(self):
         self.state_manager.maybe_transition()
