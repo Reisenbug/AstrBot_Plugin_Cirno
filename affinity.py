@@ -89,13 +89,8 @@ class AffinityManager:
         return 0.45 + r * 0.4
 
     def _daily_user_drift(self, user_id: str) -> float:
-        r1 = self._daily_hash(f"drift_a:{user_id}")
-        r2 = self._daily_hash(f"drift_b:{user_id}")
-        # Box-Muller: normal distribution, mean=0, std=12
-        # most days ±10, occasionally ±30+
-        import math
-        z = math.sqrt(-2 * math.log(max(r1, 1e-10))) * math.cos(2 * math.pi * r2)
-        return max(-40.0, min(40.0, z * 12))
+        r = self._daily_hash(f"drift:{user_id}")
+        return (r - 0.5) * 80
 
     def _validate_emotion(self, data: dict) -> dict:
         defaults = {"baseline": 0.7, "valence": 0.7, "arousal": 0.5, "vulnerability": 0.2}
