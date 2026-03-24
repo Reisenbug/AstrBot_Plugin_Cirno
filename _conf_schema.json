@@ -136,6 +136,18 @@
         "description": "启用好感度系统",
         "type": "bool",
         "default": true
+      },
+      "boredom_window": {
+        "description": "腻了检测窗口（秒）",
+        "type": "int",
+        "default": 300,
+        "hint": "在多少秒的时间窗口内统计连续对话次数"
+      },
+      "boredom_threshold": {
+        "description": "腻了触发阈值",
+        "type": "int",
+        "default": 12,
+        "hint": "窗口内超过多少次对话开始觉得腻，超过两倍则明显敷衍"
       }
     }
   },

@@ -62,8 +62,10 @@ dimension 说明：trust=信任相关，fun=有趣相关，importance=重要性�
 
 
 class AffinityManager:
-    def __init__(self, plugin):
+    def __init__(self, plugin, boredom_window: int = 300, boredom_threshold: int = 12):
         self._plugin = plugin
+        self._boredom_window = boredom_window
+        self._boredom_threshold = boredom_threshold
 
         self._emotion = {
             "baseline": 0.7,
@@ -148,9 +150,6 @@ class AffinityManager:
     @property
     def vulnerability(self) -> float:
         return self._emotion["vulnerability"]
-
-    BOREDOM_WINDOW = 600
-    BOREDOM_THRESHOLD = 6
 
     _USER_DEFAULTS = {"familiarity": 0.0, "trust": 0.5, "fun": 0.5, "importance": 0.0}
 
@@ -263,19 +262,19 @@ class AffinityManager:
     def record_interaction(self, user_id: str):
         now = time.time()
         ts_list = self._recent_interactions.get(user_id, [])
-        cutoff = now - self.BOREDOM_WINDOW
+        cutoff = now - self._boredom_window
         ts_list = [t for t in ts_list if t > cutoff]
         ts_list.append(now)
         self._recent_interactions[user_id] = ts_list
 
     def get_boredom(self, user_id: str) -> float:
         now = time.time()
-        cutoff = now - self.BOREDOM_WINDOW
+        cutoff = now - self._boredom_window
         ts_list = self._recent_interactions.get(user_id, [])
         count = sum(1 for t in ts_list if t > cutoff)
-        if count <= self.BOREDOM_THRESHOLD:
+        if count <= self._boredom_threshold:
             return 0.0
-        return min(1.0, (count - self.BOREDOM_THRESHOLD) / self.BOREDOM_THRESHOLD)
+        return min(1.0, (count - self._boredom_threshold) / self._boredom_threshold)
 
     def build_mood_prompt(self) -> str:
         v = self._emotion["valence"]

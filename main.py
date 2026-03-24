@@ -64,7 +64,11 @@ class Main(Star):
 
         affinity_cfg = config.get("affinity_settings", {})
         self._enable_affinity = affinity_cfg.get("enable", True)
-        self.affinity = AffinityManager(plugin=self)
+        self.affinity = AffinityManager(
+            plugin=self,
+            boredom_window=affinity_cfg.get("boredom_window", 300),
+            boredom_threshold=affinity_cfg.get("boredom_threshold", 12),
+        )
 
         meme_cfg = config.get("meme_settings", {})
         self._enable_meme = meme_cfg.get("enable", True)
