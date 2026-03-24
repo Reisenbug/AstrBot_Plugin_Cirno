@@ -260,6 +260,7 @@ class Main(Star):
                 )
 
                 self.affinity.increment_event_counter(sender_id)
+                self.affinity.record_interaction(sender_id)
 
         if not user_msg or not bot_reply:
             return

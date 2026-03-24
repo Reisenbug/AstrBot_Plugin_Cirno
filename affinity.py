@@ -73,6 +73,7 @@ class AffinityManager:
         }
         self._user_data: dict[str, dict] = {}
         self._event_counters: dict[str, int] = {}
+        self._recent_interactions: dict[str, list[float]] = {}
 
     def _validate_emotion(self, data: dict) -> dict:
         defaults = {"baseline": 0.7, "valence": 0.7, "arousal": 0.5, "vulnerability": 0.2}
@@ -147,6 +148,9 @@ class AffinityManager:
     @property
     def vulnerability(self) -> float:
         return self._emotion["vulnerability"]
+
+    BOREDOM_WINDOW = 600
+    BOREDOM_THRESHOLD = 6
 
     _USER_DEFAULTS = {"familiarity": 0.0, "trust": 0.5, "fun": 0.5, "importance": 0.0}
 
@@ -256,6 +260,23 @@ class AffinityManager:
     def reset_event_counter(self, user_id: str):
         self._event_counters[user_id] = 0
 
+    def record_interaction(self, user_id: str):
+        now = time.time()
+        ts_list = self._recent_interactions.get(user_id, [])
+        cutoff = now - self.BOREDOM_WINDOW
+        ts_list = [t for t in ts_list if t > cutoff]
+        ts_list.append(now)
+        self._recent_interactions[user_id] = ts_list
+
+    def get_boredom(self, user_id: str) -> float:
+        now = time.time()
+        cutoff = now - self.BOREDOM_WINDOW
+        ts_list = self._recent_interactions.get(user_id, [])
+        count = sum(1 for t in ts_list if t > cutoff)
+        if count <= self.BOREDOM_THRESHOLD:
+            return 0.0
+        return min(1.0, (count - self.BOREDOM_THRESHOLD) / self.BOREDOM_THRESHOLD)
+
     def build_mood_prompt(self) -> str:
         v = self._emotion["valence"]
         a = self._emotion["arousal"]
@@ -337,6 +358,18 @@ class AffinityManager:
             cross += "你现在有点脆弱，在喜欢的人面前可能会忍不住示弱，说出平时绝对不会说的真心话。"
         elif vuln > 0.6:
             cross += "你现在有点脆弱，别人稍微说重一点你就想哭，但你会死撑着不哭。"
+
+        boredom = self.get_boredom(user_id)
+        if boredom >= 0.7:
+            cross += (
+                "你跟这个人聊太久了，开始觉得腻了。你会越来越敷衍，回复越来越短，"
+                "甚至故意说'好无聊啊'或者找借口要走——'我去看看湖边有没有青蛙'之类的。"
+            )
+        elif boredom >= 0.4:
+            cross += (
+                "你跟这个人聊了一阵了，注意力开始飘。"
+                "你可能会突然转移话题，或者回复慢半拍，像是在想别的事。"
+            )
 
         parts = [f"\n【对当前对话者的好感度：{level}（{composite:.0f}/100）】{cross}"]
 
