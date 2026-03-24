@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 import time
@@ -77,6 +78,20 @@ class AffinityManager:
         self._event_counters: dict[str, int] = {}
         self._recent_interactions: dict[str, list[float]] = {}
 
+    @staticmethod
+    def _daily_hash(seed: str) -> float:
+        today = time.strftime("%Y-%m-%d")
+        h = hashlib.md5(f"{today}:{seed}".encode()).hexdigest()
+        return int(h[:8], 16) / 0xFFFFFFFF
+
+    def _daily_baseline(self) -> float:
+        r = self._daily_hash("baseline")
+        return 0.45 + r * 0.4
+
+    def _daily_user_drift(self, user_id: str) -> float:
+        r = self._daily_hash(f"drift:{user_id}")
+        return (r - 0.5) * 16
+
     def _validate_emotion(self, data: dict) -> dict:
         defaults = {"baseline": 0.7, "valence": 0.7, "arousal": 0.5, "vulnerability": 0.2}
         result = {}
@@ -128,9 +143,14 @@ class AffinityManager:
         if counters_saved and isinstance(counters_saved, dict):
             self._event_counters = {k: int(v) for k, v in counters_saved.items() if isinstance(v, (int, float))}
 
+        baseline = self._daily_baseline()
+        self._emotion["baseline"] = baseline
+        self._emotion["valence"] = baseline
+
         logger.info(
             f"好感度系统已加载：{len(self._user_data)} 人，"
-            f"valence={self._emotion['valence']:.2f}, arousal={self._emotion['arousal']:.2f}, "
+            f"今日基准心情={baseline:.2f}, "
+            f"arousal={self._emotion['arousal']:.2f}, "
             f"vulnerability={self._emotion['vulnerability']:.2f}"
         )
 
@@ -170,7 +190,8 @@ class AffinityManager:
             + ud["fun"] * AFFINITY_WEIGHTS["fun"]
             + ud["importance"] * AFFINITY_WEIGHTS["importance"]
         )
-        return max(0.0, min(100.0, score * 100))
+        drift = self._daily_user_drift(user_id)
+        return max(0.0, min(100.0, score * 100 + drift))
 
     def get_level(self, user_id: str) -> str:
         value = self.get_composite(user_id)
@@ -357,6 +378,12 @@ class AffinityManager:
             cross += "你现在有点脆弱，在喜欢的人面前可能会忍不住示弱，说出平时绝对不会说的真心话。"
         elif vuln > 0.6:
             cross += "你现在有点脆弱，别人稍微说重一点你就想哭，但你会死撑着不哭。"
+
+        drift = self._daily_user_drift(user_id)
+        if drift < -5:
+            cross += "今天你莫名地不太想跟这个人说话，没什么原因，就是妖精的直觉。你会回复得比平时随意一点。"
+        elif drift > 5:
+            cross += "今天你莫名地对这个人多了几分好感，也说不清为什么。"
 
         boredom = self.get_boredom(user_id)
         if boredom >= 0.7:
