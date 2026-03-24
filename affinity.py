@@ -89,8 +89,13 @@ class AffinityManager:
         return 0.45 + r * 0.4
 
     def _daily_user_drift(self, user_id: str) -> float:
-        r = self._daily_hash(f"drift:{user_id}")
-        return (r - 0.5) * 30
+        r1 = self._daily_hash(f"drift_a:{user_id}")
+        r2 = self._daily_hash(f"drift_b:{user_id}")
+        # Box-Muller: normal distribution, mean=0, std=12
+        # most days ±10, occasionally ±30+
+        import math
+        z = math.sqrt(-2 * math.log(max(r1, 1e-10))) * math.cos(2 * math.pi * r2)
+        return max(-40.0, min(40.0, z * 12))
 
     def _validate_emotion(self, data: dict) -> dict:
         defaults = {"baseline": 0.7, "valence": 0.7, "arousal": 0.5, "vulnerability": 0.2}
@@ -380,8 +385,12 @@ class AffinityManager:
             cross += "你现在有点脆弱，别人稍微说重一点你就想哭，但你会死撑着不哭。"
 
         drift = self._daily_user_drift(user_id)
-        if drift < -10:
+        if drift < -25:
+            cross += "今天你特别不想理这个人，碰到就烦。没有理由，就是妖精的直觉。你会故意冷淡、敷衍，甚至想赶人走。"
+        elif drift < -10:
             cross += "今天你莫名地不太想跟这个人说话，没什么原因，就是妖精的直觉。你会回复得比平时随意一点。"
+        elif drift > 25:
+            cross += "今天你莫名地特别想跟这个人说话，看到他就开心，自己也搞不懂为什么。"
         elif drift > 10:
             cross += "今天你莫名地对这个人多了几分好感，也说不清为什么。"
 
