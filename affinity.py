@@ -90,7 +90,7 @@ class AffinityManager:
 
     def _daily_user_drift(self, user_id: str) -> float:
         r = self._daily_hash(f"drift:{user_id}")
-        return (r - 0.5) * 16
+        return (r - 0.5) * 30
 
     def _validate_emotion(self, data: dict) -> dict:
         defaults = {"baseline": 0.7, "valence": 0.7, "arousal": 0.5, "vulnerability": 0.2}
@@ -380,9 +380,9 @@ class AffinityManager:
             cross += "你现在有点脆弱，别人稍微说重一点你就想哭，但你会死撑着不哭。"
 
         drift = self._daily_user_drift(user_id)
-        if drift < -5:
+        if drift < -10:
             cross += "今天你莫名地不太想跟这个人说话，没什么原因，就是妖精的直觉。你会回复得比平时随意一点。"
-        elif drift > 5:
+        elif drift > 10:
             cross += "今天你莫名地对这个人多了几分好感，也说不清为什么。"
 
         boredom = self.get_boredom(user_id)
