@@ -35,7 +35,8 @@
       "enable": {
         "description": "启用主动发言",
         "type": "bool",
-        "default": true
+        "default": true,
+        "hint": "与 AstrBot 的「会话隔离」功能冲突，开启会话隔离时请关闭此选项"
       },
       "check_interval_minutes": {
         "description": "检查间隔（分钟）",
