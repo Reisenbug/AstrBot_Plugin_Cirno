@@ -383,7 +383,7 @@ class Main(Star):
             profile = self.core_memory.get_profile(user_id)
             if profile:
                 events = profile.get("important_events", [])
-                events.append(result["memory"])
+                events.append(result["memory"][:50])
                 profile["important_events"] = events[-3:]
                 await self.core_memory.save()
                 logger.info(f"[琪露诺关键事件] 写入核心记忆: {result['memory']}")
