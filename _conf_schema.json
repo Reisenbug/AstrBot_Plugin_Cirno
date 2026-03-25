@@ -94,13 +94,13 @@
       "core_memory_update_threshold": {
         "description": "核心记忆更新阈值",
         "type": "int",
-        "default": 15,
+        "default": 30,
         "hint": "与某用户对话多少条后触发 LLM 更新印象"
       },
       "buffer_limit": {
         "description": "回忆压缩阈值",
         "type": "int",
-        "default": 15,
+        "default": 45,
         "hint": "每攒满多少轮对话触发一次 LLM 摘要压缩"
       },
       "recall_search_top_k": {
