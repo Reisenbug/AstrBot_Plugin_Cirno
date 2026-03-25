@@ -116,11 +116,11 @@ class CoreMemory:
             original = p.get("original_prompt", "")
             events = p.get("important_events", [])
             parts = [
-                f"\n当前和你对话的人QQ号是{sender_id}，QQ昵称是「{sender_nickname}」，"
-                f"你认识他，他的真名是{name}。"
+                f"\n【当前对话者】QQ号{sender_id}，QQ昵称「{sender_nickname}」。"
+                f"这个人就是{name}，不管昵称怎么变，他就是{name}。"
             ]
             if relationship:
-                parts.append(f"你对他的印象：{relationship}")
+                parts.append(f"你对{name}的印象：{relationship}")
             elif original:
                 parts.append(original)
             if events:
