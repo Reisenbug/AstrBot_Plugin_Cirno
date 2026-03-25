@@ -54,23 +54,28 @@ class CoreMemory:
         need_save = False
         for uid, val in self._seed_data.items():
             uid = str(uid)
-            if uid in self._profiles:
-                continue
             try:
                 name, prompt = val
             except (TypeError, ValueError):
                 logger.warning(f"核心记忆：种子数据格式异常，跳过 uid={uid}")
                 continue
-            self._profiles[uid] = {
-                "name": name,
-                "relationship": "",
-                "traits": [],
-                "important_events": [],
-                "original_prompt": prompt,
-                "updated_at": time.time(),
-            }
-            logger.info(f"核心记忆：从种子数据迁移用户 {name} ({uid})")
-            need_save = True
+            if uid in self._profiles:
+                p = self._profiles[uid]
+                if p.get("name") != name or p.get("original_prompt") != prompt:
+                    p["name"] = name
+                    p["original_prompt"] = prompt
+                    need_save = True
+            else:
+                self._profiles[uid] = {
+                    "name": name,
+                    "relationship": "",
+                    "traits": [],
+                    "important_events": [],
+                    "original_prompt": prompt,
+                    "updated_at": time.time(),
+                }
+                logger.info(f"核心记忆：从种子数据新增用户 {name} ({uid})")
+                need_save = True
 
         if need_save:
             await self.save()

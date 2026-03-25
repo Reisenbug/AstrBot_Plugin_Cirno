@@ -227,7 +227,6 @@ class Main(Star):
             )
 
         if self._enable_affinity:
-            req.system_prompt += self.affinity.build_mood_prompt()
             req.system_prompt += self.affinity.build_status_prompt(sender_id)
 
         if has_recall:
@@ -552,9 +551,9 @@ class Main(Star):
             pool = self.POKE_RESPONSES["rest"]
         elif self._enable_affinity:
             level = self.affinity.get_level(sender_id)
-            if level in ("讨厌", "冷淡"):
+            if level in ("无视", "讨厌"):
                 pool = self.POKE_RESPONSES["negative"]
-            elif level in ("喜欢", "很喜欢", "最好的朋友"):
+            elif level in ("喜欢", "很喜欢"):
                 pool = self.POKE_RESPONSES["positive"]
             else:
                 pool = self.POKE_RESPONSES["neutral"]

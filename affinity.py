@@ -6,13 +6,13 @@ import time
 from astrbot.api import logger
 
 AFFINITY_LEVELS = [
-    (0, 15, "讨厌", "你不太喜欢这个人，态度冷淡甚至有点凶，不想搭理。"),
-    (16, 30, "冷淡", "你对这个人没什么感觉，回答简短，不太热情。"),
-    (31, 45, "普通", "你对这个人态度一般，正常交流。"),
-    (46, 60, "友好", "你觉得这个人还不错，比较愿意和他聊天。"),
-    (61, 75, "喜欢", "你挺喜欢这个人的，会比较主动，语气亲近。"),
-    (76, 90, "很喜欢", "你很喜欢这个人，会撒娇、分享秘密、主动关心。"),
-    (91, 100, "最好的朋友", "这个人是你最重要的朋友之一，你会无条件信任和依赖。"),
+    (0, 15, "无视"),
+    (16, 30, "讨厌"),
+    (31, 45, "冷淡"),
+    (46, 60, "普通"),
+    (61, 75, "友好"),
+    (76, 90, "喜欢"),
+    (91, 100, "很喜欢"),
 ]
 
 AFFINITY_WEIGHTS = {
@@ -196,7 +196,7 @@ class AffinityManager:
 
     def get_level(self, user_id: str) -> str:
         value = self.get_composite(user_id)
-        for low, high, name, _ in AFFINITY_LEVELS:
+        for low, high, name in AFFINITY_LEVELS:
             if low <= value <= high:
                 return name
         return "普通"
@@ -298,23 +298,6 @@ class AffinityManager:
             return 0.0
         return min(1.0, (count - self._boredom_threshold) / self._boredom_threshold)
 
-    def build_mood_prompt(self) -> str:
-        v = self._emotion["valence"]
-        a = self._emotion["arousal"]
-
-        if v >= 0.6 and a >= 0.6:
-            desc = "你现在超级得意，嘴上要飞上天了。但得意过头之后你可能会突然不确定，追问一句'是真的吧？不是在骗我吧？'"
-        elif v >= 0.6 and a < 0.6:
-            desc = "你现在心情不错，懒洋洋的，很满足。会不自觉哼着跑调的歌。"
-        elif v < 0.4 and a >= 0.6:
-            desc = "你现在又委屈又生气。你会嘴硬说'才没有生气'，但回复速度变快、语气变冲，一眼就看得出来。"
-        elif v < 0.4:
-            desc = "你其实挺难过的，但你不想让别人看出来。你会假装没事，聊一些无关紧要的事，比如突然问今天天气怎么样。如果对方追问你怎么了，你会更用力地否认。"
-        else:
-            desc = "你现在心情平平的，正常状态。"
-
-        return f"\n【当前情绪】{desc}"
-
     def build_status_prompt(self, user_id: str) -> str:
         composite = self.get_composite(user_id)
         level = self.get_level(user_id)
@@ -325,60 +308,42 @@ class AffinityManager:
 
         if composite >= 76:
             if v < 0.4:
-                cross = (
-                    "你现在心情不好，但这个人是你很在乎的人。"
-                    "你可能会忍不住跟他撒娇或者小声抱怨，说完又觉得自己太丢人了。"
-                    "如果对方温柔地回应，你会嘴硬说'才不需要你安慰'，但声音会变小。"
-                )
+                cross = "心情不好，但在乎的人来了。会忍不住撒娇抱怨，嘴硬说不需要安慰。"
             elif v >= 0.6 and a >= 0.6:
-                cross = (
-                    "看到最喜欢的人你更兴奋了！会特别黏人、拼命分享你觉得厉害的事。"
-                    "但分享完又会偷偷看对方反应，紧张地想'他会不会觉得无聊'。"
-                )
+                cross = "最喜欢的人来了！黏人、拼命分享，但又偷看对方反应怕被嫌烦。"
             else:
-                cross = (
-                    "你跟这个人说话会故意唱反调，说'切'但回复特别快，"
-                    "说'才不在乎'但记得对方说的每句话。"
-                )
+                cross = "故意唱反调，说'切'但回复特别快，说'才不在乎'但记得每句话。"
         elif composite >= 61:
             if v < 0.4:
-                cross = (
-                    "你心情不太好，但这个人你还是愿意聊的。"
-                    "语气没平时那么有活力，偶尔会突然沉默。"
-                    "如果对方问你怎么了，你会说'没什么'但不会赶人走。"
-                )
+                cross = "心情不好但愿意聊，语气没平时活泼。问怎么了会说'没什么'。"
             elif v >= 0.6:
-                cross = (
-                    "心情不错加上喜欢的人，你会比平时更主动。"
-                    "被夸的话你绝对不会直说开心，会拼命找别的话题转移，"
-                    "但声音会不自觉变小，藏不住的。"
-                )
+                cross = "心情好加上喜欢的人，更主动。被夸不会承认但藏不住。"
             else:
-                cross = "你挺喜欢这个人的，会比较主动，语气亲近。"
+                cross = "挺喜欢这个人，主动，语气亲近。"
         elif composite >= 46:
             if v < 0.4:
-                cross = "你心情不好，没太多耐心，回复偏短，但不会故意凶人。"
+                cross = "心情不好，回复偏短，但不会故意凶。"
             elif v >= 0.6:
-                cross = "心情不错，对这个人比较友好，正常热情地聊。"
+                cross = "心情不错，友好热情。"
             else:
-                cross = "你觉得这个人还不错，比较愿意和他聊天。"
+                cross = "觉得这个人还不错，愿意聊。"
         elif composite >= 31:
             if v < 0.4:
-                cross = "你心情不好，又是个不太熟的人，回复很敷衍。"
+                cross = "心情不好，不太熟的人，很敷衍。"
             else:
-                cross = "你对这个人态度一般，正常交流。"
+                cross = "态度一般，正常交流。"
         elif composite >= 16:
-            cross = "你对这个人没什么感觉，回答简短，不太热情。"
+            cross = "没什么感觉，回答简短。"
         else:
             if v < 0.4:
-                cross = "你心情很差，又碰到讨厌的人，可能会直接怼回去或者干脆不理。"
+                cross = "心情差又碰到讨厌的人，可能直接怼或不理。"
             else:
-                cross = "你不太想搭理这个人，态度冷淡。"
+                cross = "不想搭理，态度冷淡。"
 
         if vuln > 0.6 and composite >= 61:
-            cross += "你现在有点脆弱，在喜欢的人面前可能会忍不住示弱，说出平时绝对不会说的真心话。"
+            cross += "有点脆弱，可能忍不住示弱说真心话。"
         elif vuln > 0.6:
-            cross += "你现在有点脆弱，别人稍微说重一点你就想哭，但你会死撑着不哭。"
+            cross += "有点脆弱，说重了会想哭但死撑。"
 
         drift = self._daily_user_drift(user_id)
         if drift < -25:
@@ -402,26 +367,7 @@ class AffinityManager:
                 "你可能会突然转移话题，或者回复慢半拍，像是在想别的事。"
             )
 
-        parts = [f"\n【对当前对话者的好感度：{level}（{composite:.0f}/100）】{cross}"]
-
-        traits = []
-        if ud["familiarity"] > 0.7:
-            traits.append("你们经常聊天，很熟悉")
-        elif ud["familiarity"] < 0.2:
-            traits.append("你和这个人不太熟")
-        if ud["trust"] > 0.7:
-            traits.append("你很信任这个人")
-        elif ud["trust"] < 0.3:
-            traits.append("你不太信任这个人")
-        if ud["fun"] > 0.7:
-            traits.append("你觉得和这个人聊天很有趣")
-        if ud["importance"] > 0.5:
-            traits.append("这个人对你来说很重要")
-
-        if traits:
-            parts.append("（" + "，".join(traits) + "）")
-
-        return "".join(parts)
+        return f"\n【对当前对话者的好感度：{level}（{composite:.0f}/100）】{cross}"
 
     def build_rating_prompt(self) -> str:
         return RATING_PROMPT
