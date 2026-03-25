@@ -704,6 +704,74 @@ class Main(Star):
         lines.append("用法: 琪露诺记忆 <名字/QQ号> | 琪露诺记忆 回忆")
         yield event.plain_result("\n".join(lines))
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("琪露诺记忆管理")
+    async def manage_memory(self, event: AstrMessageEvent, action: str = "", target: str = ""):
+        if not self._enable_core_memory:
+            yield event.plain_result("核心记忆未启用")
+            return
+        action = action.strip()
+        target = target.strip()
+        if not action:
+            yield event.plain_result(
+                "用法:\n"
+                "琪露诺记忆管理 清除印象 <名字/QQ号>\n"
+                "琪露诺记忆管理 清除事件 <名字/QQ号>\n"
+                "琪露诺记忆管理 清除全部 <名字/QQ号>\n"
+                "琪露诺记忆管理 删除 <名字/QQ号>\n"
+                "琪露诺记忆管理 全部清除印象\n"
+                "琪露诺记忆管理 全部清除事件"
+            )
+            return
+        if action in ("全部清除印象", "全部清除事件"):
+            count = 0
+            for p in self.core_memory._profiles.values():
+                if action == "全部清除印象" and p.get("relationship"):
+                    p["relationship"] = ""
+                    p["traits"] = []
+                    count += 1
+                elif action == "全部清除事件" and p.get("important_events"):
+                    p["important_events"] = []
+                    count += 1
+            await self.core_memory.save()
+            field = "印象" if "印象" in action else "事件"
+            yield event.plain_result(f"已清除 {count} 人的{field}")
+            return
+        if not target:
+            yield event.plain_result("缺少目标，请指定名字或QQ号")
+            return
+        profile = None
+        for uid, p in self.core_memory._profiles.items():
+            if uid == target or p.get("name", "") == target:
+                profile = (uid, p)
+                break
+        if not profile:
+            yield event.plain_result(f"没有找到「{target}」")
+            return
+        uid, p = profile
+        name = p.get("name", uid)
+        if action == "清除印象":
+            p["relationship"] = ""
+            p["traits"] = []
+            await self.core_memory.save()
+            yield event.plain_result(f"已清除{name}的印象和特征")
+        elif action == "清除事件":
+            p["important_events"] = []
+            await self.core_memory.save()
+            yield event.plain_result(f"已清除{name}的重要事件")
+        elif action == "清除全部":
+            p["relationship"] = ""
+            p["traits"] = []
+            p["important_events"] = []
+            await self.core_memory.save()
+            yield event.plain_result(f"已清除{name}的所有记忆（保留名字和背景设定）")
+        elif action == "删除":
+            del self.core_memory._profiles[uid]
+            await self.core_memory.save()
+            yield event.plain_result(f"已删除{name}(QQ{uid})的档案")
+        else:
+            yield event.plain_result(f"未知操作: {action}")
+
     async def terminate(self):
         await self.put_kv_data("state_data", self.state_manager.to_dict())
         await self.put_kv_data("group_sessions", list(self._group_sessions))
