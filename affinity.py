@@ -31,11 +31,12 @@ STATE_CATEGORY_MODIFIERS = {
 INNER_PATTERN = re.compile(r"<inner>(.*?)</inner>", re.DOTALL)
 
 RATING_PROMPT = (
-    "\n【情绪反馈规则】"
-    "每次回复末尾附上 <inner>{\"valence_shift\": N, \"reason\": \"一句话\"}</inner>。"
-    "valence_shift 0~1：0.5=中性，>0.5=正面，<0.5=负面。以你的主观感受判断。"
-    "示例：被夸可爱 <inner>{\"valence_shift\": 0.8, \"reason\": \"被夸了好开心\"}</inner>。"
-    "不要在正文中提及这个标签。"
+    "\n【必须遵守】你的每一条回复末尾都必须附上情绪标签，没有例外。"
+    "格式：<inner>{\"valence_shift\": N, \"reason\": \"一句话\"}</inner>"
+    "\nvalence_shift 范围 0~1：0.5=中性，>0.5=正面，<0.5=负面。"
+    "\n示例：被夸可爱→回复内容<inner>{\"valence_shift\": 0.8, \"reason\": \"被夸了好开心\"}</inner>"
+    "\n被骂笨蛋→回复内容<inner>{\"valence_shift\": 0.3, \"reason\": \"被骂了有点气\"}</inner>"
+    "\n不要在正文中提及这个标签。漏掉标签视为违规。"
 )
 
 KEY_EVENT_PROMPT = """你是琪露诺，幻想乡最强的冰精灵。

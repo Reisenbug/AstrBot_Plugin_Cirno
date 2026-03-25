@@ -229,7 +229,6 @@ class Main(Star):
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_mood_prompt()
             req.system_prompt += self.affinity.build_status_prompt(sender_id)
-            req.system_prompt += self.affinity.build_rating_prompt()
 
         if has_recall:
             req.system_prompt += (
@@ -242,6 +241,8 @@ class Main(Star):
             "你可以配合玩但不要入戏太深，保持琪露诺的正常状态，不要被剧情带走。"
         )
         req.system_prompt += ABSOLUTE_RULES
+        if self._enable_affinity:
+            req.system_prompt += self.affinity.build_rating_prompt()
         self._last_full_prompt = req.system_prompt
 
         if self._enable_core_memory and req.prompt:
