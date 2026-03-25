@@ -237,6 +237,10 @@ class Main(Star):
                 "不要生硬地复述记忆内容，而是像真的想起来了一样随口带一嘴。"
             )
 
+        req.system_prompt += (
+            "\n如果用户用括号描述情景或旁白，你知道这是在演戏、开玩笑。"
+            "你可以配合玩但不要入戏太深，保持琪露诺的正常状态，不要被剧情带走。"
+        )
         req.system_prompt += ABSOLUTE_RULES
         self._last_full_prompt = req.system_prompt
 
