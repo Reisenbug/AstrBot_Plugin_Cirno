@@ -137,6 +137,15 @@ class Main(Star):
                 f"琪露诺主动发言 cron job 已注册，间隔 {interval} 分钟"
             )
 
+    def _replace_at_with_names(self, text: str) -> str:
+        def _repl(m):
+            qq = m.group(2)
+            p = self.core_memory.get_profile(qq)
+            if p:
+                return f"@{p.get('name', m.group(1))}"
+            return m.group(0)
+        return re.sub(r"@([^(]+)\((\d+)\)", _repl, text)
+
     @filter.on_llm_request()
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         self.state_manager.on_user_interaction()
@@ -160,6 +169,7 @@ class Main(Star):
 
         if self._enable_core_memory:
             user_msg_text = event.message_str or ""
+            user_msg_text = self._replace_at_with_names(user_msg_text)
             people_prompt = self.core_memory.build_people_prompt(user_msg_text, sender_id)
             if people_prompt:
                 req.system_prompt += f"\n{people_prompt}"
@@ -229,6 +239,9 @@ class Main(Star):
 
         req.system_prompt += ABSOLUTE_RULES
         self._last_full_prompt = req.system_prompt
+
+        if self._enable_core_memory and req.prompt:
+            req.prompt = self._replace_at_with_names(req.prompt)
 
         await self.put_kv_data("state_data", self.state_manager.to_dict())
 
