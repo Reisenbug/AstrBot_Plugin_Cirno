@@ -1,3 +1,4 @@
+import asyncio
 import random
 import re
 import time
@@ -283,9 +284,9 @@ class Main(Star):
                         f"交互计数={count}/{self.core_memory.update_threshold}"
                     )
                     recent_summary = f"{sender_name}说：「{user_msg}」\n琪露诺回答：「{bot_reply}」"
-                    await self.core_memory.update_profile_via_llm(
+                    asyncio.create_task(self.core_memory.update_profile_via_llm(
                         sender_id, recent_summary, self.context, nickname=sender_name
-                    )
+                    ))
 
         if self._enable_meme:
             meme_path = self.meme_selector.select(bot_reply)
