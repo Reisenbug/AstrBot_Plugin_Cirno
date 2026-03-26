@@ -242,10 +242,19 @@ class Main(Star):
         req.system_prompt += ABSOLUTE_RULES
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_rating_prompt()
-        self._last_full_prompt = req.system_prompt
-
         if self._enable_core_memory and req.prompt:
             req.prompt = self._replace_at_with_names(req.prompt)
+
+        parts = [f"=== SYSTEM PROMPT ===\n{req.system_prompt}"]
+        if req.contexts:
+            parts.append(f"\n=== CONTEXTS ({len(req.contexts)} turns) ===")
+            for msg in req.contexts:
+                role = msg.get("role", "?")
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    parts.append(f"[{role}] {content}")
+        parts.append(f"\n=== PROMPT ===\n{req.prompt or ''}")
+        self._last_full_prompt = "\n".join(parts)
 
         await self.put_kv_data("state_data", self.state_manager.to_dict())
 
