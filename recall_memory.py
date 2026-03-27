@@ -121,6 +121,19 @@ class RecallMemory:
                     await self._key_event_callback(uid, name, user_entries)
             asyncio.create_task(self._compress(batch))
 
+    def _find_related_summaries(self, batch: list[dict]) -> list[str]:
+        users = {e["uid"] for e in batch}
+        batch_kw = set()
+        for e in batch:
+            batch_kw.update(extract_keywords(e["msg"] + " " + e["reply"]))
+        related = []
+        for s in self._summaries:
+            user_overlap = users & set(s.get("users", []))
+            kw_overlap = batch_kw & set(s.get("kw", []))
+            if user_overlap and len(kw_overlap) >= 2:
+                related.append(s["text"])
+        return related[-3:]
+
     async def _compress(self, batch: list[dict]):
         if not self._llm_generate:
             logger.warning("回忆记忆：无 LLM 生成函数，跳过压缩")
@@ -132,8 +145,18 @@ class RecallMemory:
             conv_lines.append(f"琪露诺：{e['reply']}")
         conversations = "\n".join(conv_lines)
 
-        try:
+        related = self._find_related_summaries(batch)
+        if related:
+            existing = "\n".join(f"- {r}" for r in related)
+            prompt = COMPRESS_PROMPT.format(conversations=conversations) + (
+                f"\n\n你之前关于这些人的记忆：\n{existing}\n"
+                "如果新对话是旧记忆的延续或补充，把它们融合成一段更完整的记忆。"
+                "不要重复旧内容，只补充新的部分。"
+            )
+        else:
             prompt = COMPRESS_PROMPT.format(conversations=conversations)
+
+        try:
             resp = await self._llm_generate(prompt)
             if not resp or not resp.completion_text:
                 logger.warning("回忆记忆：LLM 压缩返回空结果")
