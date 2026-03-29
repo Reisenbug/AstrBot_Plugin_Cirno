@@ -91,6 +91,7 @@ class Main(Star):
         self.slang_store.load()
         self._known_groups: list[tuple[str, str]] = []
         self._slang_msg_counter: int = 0
+        self._prank_state: dict | None = None
 
     async def initialize(self):
         saved = await self.get_kv_data("state_data", None)
@@ -253,6 +254,9 @@ class Main(Star):
             "\n如果用户用括号描述情景或旁白，你知道这是在演戏、开玩笑。"
             "你可以配合玩但不要入戏太深，保持琪露诺的正常状态，不要被剧情带走。"
         )
+        if self._prank_state is not None:
+            req.system_prompt += self._build_prank_prompt(sender_id, sender_nickname)
+
         if self._imitation_state is not None:
             tname = self._imitation_state["target_name"]
             style = self._imitation_state["style_desc"]
@@ -374,6 +378,56 @@ class Main(Star):
                 logger.info(
                     f"[琪露诺戳一戳] 触发! valence={valence:.2f} chance={chance:.2%}"
                 )
+
+        if self._prank_state is not None:
+            self._prank_state["turns_left"] -= 1
+            if self._prank_state["turns_left"] <= 0:
+                logger.info("[琪露诺恶作剧] 恶作剧结束")
+                self._prank_state = None
+        elif self._enable_affinity and event.session.message_type == MessageType.GROUP_MESSAGE:
+            self._maybe_enter_prank(sender_id)
+
+    def _maybe_enter_prank(self, sender_id: str):
+        valence = self.affinity.valence
+        composite = self.affinity.get_composite(sender_id)
+        # 心情好才有恶作剧的兴致，心情差就算了
+        if valence < 0.55:
+            return
+        # 基础概率由心情决定，好感度作为乘数（好感高概率更高，但低好感也有机会）
+        mood_factor = (valence - 0.55) / 0.45  # 0~1
+        affinity_factor = 0.3 + 0.7 * (composite / 100.0)  # 0.3~1.0
+        chance = mood_factor * affinity_factor * 0.12
+        if random.random() < chance:
+            turns = random.randint(4, 8)
+            self._prank_state = {
+                "turns_left": turns,
+                "triggered_by": sender_id,
+            }
+            logger.info(
+                f"[琪露诺恶作剧] 进入恶作剧模式! "
+                f"valence={valence:.2f} composite={composite:.0f} "
+                f"chance={chance:.2%} turns={turns}"
+            )
+
+    def _build_prank_prompt(self, sender_id: str, sender_name: str) -> str:
+        behaviors = [
+            "一本正经地分析别人说的话，把最普通的话过度解读成意义深远的东西，越认真越好",
+            f"突然给{sender_name}起一个奇怪的外号，然后全程叫那个外号，态度理所当然",
+            f"故意曲解{sender_name}说的话，理解成完全不同的意思，然后基于错误理解认真回应",
+            f"假装不认识{sender_name}，用完全陌生的语气应对，说「你是谁啊」",
+            f"假装把{sender_name}认错成另一个人，坚持叫错名字或者说错事",
+            f"编造一件{sender_name}最近在群里干的蠢事，描述得绘声绘色像是亲眼目睹",
+            f"对{sender_name}说的某件事连续追问「然后呢？」，每次都追一步，完全不管对方答没答",
+            "疯狂附和对方说的话，同意程度极其夸张，好像对方说了什么惊天大道理",
+            "假装完全听不懂对方说的话，对非常正常的句子一直追问「什么意思」，对方越解释越装傻",
+        ]
+        behavior = random.choice(behaviors)
+        turns_left = self._prank_state["turns_left"] if self._prank_state else 1
+        return (
+            f"\n【恶作剧模式】你现在心情特别好，想搞点事情。这条回复请：{behavior}。"
+            f"保持自然，像是你真的这么想，不要解释自己在搞恶作剧。"
+            f"（剩余 {turns_left} 轮）"
+        )
 
     async def _recall_llm_generate(self, prompt: str):
         try:
@@ -779,6 +833,10 @@ class Main(Star):
                     f"[熟悉={u['familiarity']:.2f} 信任={u['trust']:.2f} "
                     f"有趣={u['fun']:.2f} 重要={u['importance']:.2f}]"
                 )
+        if self._prank_state:
+            lines.append(f"恶作剧模式: 激活，剩余 {self._prank_state['turns_left']} 轮")
+        else:
+            lines.append("恶作剧模式: 未激活")
         yield event.plain_result("\n".join(lines))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
