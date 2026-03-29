@@ -899,6 +899,17 @@ class Main(Star):
         logger.info(f"[琪露诺模仿] 停止模仿 {name}")
         yield event.plain_result(f"好啦，我不学{name}说话了，恢复成最强的我！")
 
+    @filter.command("琪露诺恶作剧")
+    async def start_prank(self, event: AstrMessageEvent):
+        sender_id = str(event.get_sender_id())
+        if self._prank_state is not None:
+            yield event.plain_result(f"已经在恶作剧了！还剩 {self._prank_state['turns_left']} 轮。")
+            return
+        turns = random.randint(4, 8)
+        self._prank_state = {"turns_left": turns, "triggered_by": sender_id}
+        logger.info(f"[琪露诺恶作剧] 手动触发，turns={turns}")
+        yield event.plain_result("哼哼……")
+
     @filter.command("琪露诺记忆")
     async def debug_memory(self, event: AstrMessageEvent, target: str = ""):
         target = target.strip()
