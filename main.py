@@ -90,6 +90,7 @@ class Main(Star):
         self.slang_store = SlangStore(data_dir)
         self.slang_store.load()
         self._slang_cron_job_id: str | None = None
+        self._known_groups: list[tuple[str, str]] = []
 
     async def initialize(self):
         saved = await self.get_kv_data("state_data", None)
@@ -175,6 +176,10 @@ class Main(Star):
                 await self.put_kv_data(
                     "group_sessions", list(self._group_sessions)
                 )
+            platform_id = event.get_platform_id()
+            group_id = event.get_group_id()
+            if platform_id and group_id and (platform_id, group_id) not in self._known_groups:
+                self._known_groups.append((platform_id, group_id))
 
         sender_id = str(event.get_sender_id())
         sender_nickname = event.get_sender_name()
@@ -509,18 +514,29 @@ class Main(Star):
 
     async def _slang_update(self):
         logger.info("[琪露诺学习] 开始网络用语学习任务")
-        all_uids = self.user_msg_store.get_all_uids()
-        if not all_uids:
-            logger.info("[琪露诺学习] 没有用户消息，跳过")
+        if not self._known_groups:
+            logger.info("[琪露诺学习] 没有已知群组，跳过")
             return
         lines = []
-        for uid in all_uids:
-            for r in self.user_msg_store.get_recent(uid, limit=30):
-                msg = r.get("msg", "").strip()
-                if msg:
-                    lines.append(msg)
+        for platform_id, group_id in self._known_groups:
+            try:
+                records = await self.context.message_history_manager.get(
+                    platform_id=platform_id,
+                    user_id=group_id,
+                    page_size=200,
+                )
+                for record in records:
+                    content = record.content if isinstance(record.content, dict) else {}
+                    parts = content.get("message", [])
+                    text = " ".join(
+                        p.get("text", "") for p in parts if p.get("type") == "plain"
+                    ).strip()
+                    if text:
+                        lines.append(text)
+            except Exception as e:
+                logger.error(f"[琪露诺学习] 读取群 {group_id} 消息失败: {e}")
         if not lines:
-            logger.info("[琪露诺学习] 所有用户消息均为空，跳过")
+            logger.info("[琪露诺学习] 没有可用消息，跳过")
             return
         existing_words = [e["word"] for e in self.slang_store.get_all()]
         existing_hint = f"已知词汇（不要重复）：{', '.join(existing_words)}\n" if existing_words else ""

@@ -46,6 +46,3 @@ class UserMessageStore:
     def get_recent(self, uid: str, limit: int = 30) -> list[dict]:
         records = self._load(uid)
         return records[-limit:]
-
-    def get_all_uids(self) -> list[str]:
-        return [p.stem for p in self._dir.glob("*.json")]
