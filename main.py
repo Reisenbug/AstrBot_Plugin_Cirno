@@ -89,8 +89,8 @@ class Main(Star):
         self.user_msg_store = UserMessageStore(data_dir)
         self.slang_store = SlangStore(data_dir)
         self.slang_store.load()
-        self._slang_cron_job_id: str | None = None
         self._known_groups: list[tuple[str, str]] = []
+        self._slang_msg_counter: int = 0
 
     async def initialize(self):
         saved = await self.get_kv_data("state_data", None)
@@ -146,14 +146,6 @@ class Main(Star):
                 f"琪露诺主动发言 cron job 已注册，间隔 {interval} 分钟"
             )
 
-        slang_job = await self.context.cron_manager.add_basic_job(
-            name="cirno_slang_update",
-            cron_expression="0 2 * * *",
-            handler=self._slang_update,
-            description="琪露诺网络用语学习（每日凌晨2点）",
-        )
-        self._slang_cron_job_id = slang_job.job_id
-        logger.info("琪露诺网络用语学习 cron job 已注册（每日 02:00）")
 
     def _replace_at_with_names(self, text: str) -> str:
         def _repl(m):
@@ -340,6 +332,12 @@ class Main(Star):
             logger.info(f"[琪露诺回忆归档] {sender_name}({sender_id}): {user_msg[:30]}")
 
         self.user_msg_store.append(sender_id, sender_name, user_msg)
+
+        if event.session.message_type == MessageType.GROUP_MESSAGE:
+            self._slang_msg_counter += 1
+            if self._slang_msg_counter >= 75:
+                self._slang_msg_counter = 0
+                asyncio.create_task(self._slang_update())
 
         if self._enable_core_memory:
             is_known = self.core_memory.get_profile(sender_id) is not None
@@ -542,8 +540,8 @@ class Main(Star):
         existing_hint = f"已知词汇（不要重复）：{', '.join(existing_words)}\n" if existing_words else ""
         prompt = (
             f"{existing_hint}"
-            "下面是群聊消息记录，请从中识别3-5个网络流行语、梗、缩写或新兴说法。\n"
-            "要求：\n- 只提取有实际含义的网络用语，不要提取普通词汇\n"
+            "下面是群聊消息记录，请从中识别3-5个群里特有的说法，包括：网络用语、梗、游戏术语、二次元词汇、专业缩写、圈子黑话等。\n"
+            "要求：\n- 只提取有实际含义的特定词汇，不要提取日常普通词汇\n"
             "- scene字段填写能触发使用这个词的场景关键词，空格分隔，3-6个词\n"
             "- 如果没有发现新词，返回空数组 []\n"
             "只输出合法JSON数组，格式：\n"
