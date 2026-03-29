@@ -18,6 +18,7 @@ from .meme_sender import MemeSelector
 from .recall_memory import RecallMemory
 from .state_manager import CirnoStateManager
 from .user_message_store import UserMessageStore
+from .slang_store import SlangStore
 
 try:
     from .local_config import DEFAULT_USER_INFO, ABSOLUTE_RULES
@@ -86,6 +87,9 @@ class Main(Star):
         self._imitation_state: dict | None = None
         data_dir = str(StarTools.get_data_dir("astrbot_plugin_cirno"))
         self.user_msg_store = UserMessageStore(data_dir)
+        self.slang_store = SlangStore(data_dir)
+        self.slang_store.load()
+        self._slang_cron_job_id: str | None = None
 
     async def initialize(self):
         saved = await self.get_kv_data("state_data", None)
@@ -140,6 +144,15 @@ class Main(Star):
             logger.info(
                 f"琪露诺主动发言 cron job 已注册，间隔 {interval} 分钟"
             )
+
+        slang_job = await self.context.cron_manager.add_basic_job(
+            name="cirno_slang_update",
+            cron_expression="0 2 * * *",
+            handler=self._slang_update,
+            description="琪露诺网络用语学习（每日凌晨2点）",
+        )
+        self._slang_cron_job_id = slang_job.job_id
+        logger.info("琪露诺网络用语学习 cron job 已注册（每日 02:00）")
 
     def _replace_at_with_names(self, text: str) -> str:
         def _repl(m):
@@ -253,6 +266,13 @@ class Main(Star):
                 f"\n模仿时：保留琪露诺的思维方式和情感，但把表达方式换成{tname}的风格。"
                 f"不要在回复中说「我在模仿{tname}」，直接用那个风格说话。"
             )
+        slang_matches = self.slang_store.match(event.message_str or "")
+        if slang_matches:
+            slang_lines = "\n".join(
+                f'「{e["word"]}」：{e["meaning"]}，可以自然地用在合适的场合。'
+                for e in slang_matches
+            )
+            req.system_prompt += f"\n【群里的说法】\n{slang_lines}"
         req.system_prompt += ABSOLUTE_RULES
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_rating_prompt()
@@ -486,6 +506,78 @@ class Main(Star):
             )
         except Exception as e:
             logger.debug(f"戳一戳发送失败: {e}")
+
+    async def _slang_update(self):
+        logger.info("[琪露诺学习] 开始网络用语学习任务")
+        all_uids = self.user_msg_store.get_all_uids()
+        if not all_uids:
+            logger.info("[琪露诺学习] 没有用户消息，跳过")
+            return
+        lines = []
+        for uid in all_uids:
+            for r in self.user_msg_store.get_recent(uid, limit=30):
+                msg = r.get("msg", "").strip()
+                if msg:
+                    lines.append(msg)
+        if not lines:
+            logger.info("[琪露诺学习] 所有用户消息均为空，跳过")
+            return
+        existing_words = [e["word"] for e in self.slang_store.get_all()]
+        existing_hint = f"已知词汇（不要重复）：{', '.join(existing_words)}\n" if existing_words else ""
+        prompt = (
+            f"{existing_hint}"
+            "下面是群聊消息记录，请从中识别3-5个网络流行语、梗、缩写或新兴说法。\n"
+            "要求：\n- 只提取有实际含义的网络用语，不要提取普通词汇\n"
+            "- scene字段填写能触发使用这个词的场景关键词，空格分隔，3-6个词\n"
+            "- 如果没有发现新词，返回空数组 []\n"
+            "只输出合法JSON数组，格式：\n"
+            '[{"word": "词", "meaning": "含义", "scene": "关键词1 关键词2 关键词3"}, ...]\n\n'
+            "消息记录：\n" + "\n".join(lines[-200:])
+        )
+        try:
+            provider_id = self.context.get_all_providers()[0].meta().id
+        except Exception:
+            logger.warning("[琪露诺学习] 无可用 LLM Provider，跳过")
+            return
+        try:
+            resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt,
+                system_prompt="你是一个JSON生成器，只输出合法的JSON数组，不要输出其他任何内容。",
+            )
+        except Exception as e:
+            logger.error(f"[琪露诺学习] LLM 调用失败: {e}")
+            return
+        if not resp or not resp.completion_text:
+            logger.warning("[琪露诺学习] LLM 返回空结果")
+            return
+        raw = resp.completion_text.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[^\n]*\n?", "", raw)
+            raw = re.sub(r"\n?```$", "", raw)
+        try:
+            new_words = json.loads(raw)
+            if not isinstance(new_words, list):
+                raise ValueError("not a list")
+        except Exception as e:
+            logger.error(f"[琪露诺学习] JSON 解析失败: {e} | raw={raw[:200]}")
+            return
+        added = 0
+        for item in new_words:
+            if not isinstance(item, dict):
+                continue
+            word = item.get("word", "").strip()
+            meaning = item.get("meaning", "").strip()
+            scene = item.get("scene", "").strip()
+            if word and meaning and scene:
+                if self.slang_store.add(word, meaning, scene):
+                    added += 1
+                    logger.info(f"[琪露诺学习] 新词: 「{word}」→ {meaning} (scene: {scene})")
+        if added:
+            self.slang_store.save()
+            logger.info(f"[琪露诺学习] 新增 {added} 个词，总计 {len(self.slang_store.get_all())} 个")
+        else:
+            logger.info("[琪露诺学习] 本次未发现新词")
 
     async def _proactive_check(self):
         self.state_manager.maybe_transition()
