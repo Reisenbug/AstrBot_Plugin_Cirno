@@ -17,6 +17,7 @@ from .core_memory import CoreMemory
 from .meme_sender import MemeSelector
 from .recall_memory import RecallMemory
 from .state_manager import CirnoStateManager
+from .user_message_store import UserMessageStore
 
 try:
     from .local_config import DEFAULT_USER_INFO, ABSOLUTE_RULES
@@ -82,6 +83,9 @@ class Main(Star):
         self._group_sessions: set[str] = set()
         self._cron_job_id: str | None = None
         self._last_full_prompt: str = ""
+        self._imitation_state: dict | None = None
+        data_dir = str(StarTools.get_data_dir("astrbot_plugin_cirno"))
+        self.user_msg_store = UserMessageStore(data_dir)
 
     async def initialize(self):
         saved = await self.get_kv_data("state_data", None)
@@ -239,6 +243,16 @@ class Main(Star):
             "\n如果用户用括号描述情景或旁白，你知道这是在演戏、开玩笑。"
             "你可以配合玩但不要入戏太深，保持琪露诺的正常状态，不要被剧情带走。"
         )
+        if self._imitation_state is not None:
+            tname = self._imitation_state["target_name"]
+            style = self._imitation_state["style_desc"]
+            req.system_prompt += (
+                f"\n【当前任务】你现在在模仿「{tname}」的说话风格。"
+                f"你仍然是琪露诺，有琪露诺的记忆和性格，但你说话的方式、语气、用词习惯要尽量像{tname}。"
+                f"\n{tname}的说话风格特点：\n{style}"
+                f"\n模仿时：保留琪露诺的思维方式和情感，但把表达方式换成{tname}的风格。"
+                f"不要在回复中说「我在模仿{tname}」，直接用那个风格说话。"
+            )
         req.system_prompt += ABSOLUTE_RULES
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_rating_prompt()
@@ -300,6 +314,8 @@ class Main(Star):
             await self.recall_memory.archive(sender_id, sender_name, user_msg, bot_reply)
             logger.info(f"[琪露诺回忆归档] {sender_name}({sender_id}): {user_msg[:30]}")
 
+        self.user_msg_store.append(sender_id, sender_name, user_msg)
+
         if self._enable_core_memory:
             is_known = self.core_memory.get_profile(sender_id) is not None
             if is_known or self._allow_stranger_profile:
@@ -309,7 +325,12 @@ class Main(Star):
                         f"[琪露诺核心记忆] 触发LLM更新 {sender_name}({sender_id}), "
                         f"交互计数={count}/{self.core_memory.update_threshold}"
                     )
-                    recent_summary = f"{sender_name}说：「{user_msg}」\n琪露诺回答：「{bot_reply}」"
+                    recent_records = self.user_msg_store.get_recent(sender_id, limit=20)
+                    if recent_records:
+                        lines = [f"{r['name']}：「{r['msg']}」" for r in recent_records]
+                        recent_summary = "\n".join(lines)
+                    else:
+                        recent_summary = f"{sender_name}说：「{user_msg}」\n琪露诺回答：「{bot_reply}」"
                     asyncio.create_task(self.core_memory.update_profile_via_llm(
                         sender_id, recent_summary, self.context, nickname=sender_name
                     ))
@@ -397,6 +418,44 @@ class Main(Star):
                 logger.info(f"[琪露诺关键事件] 写入核心记忆: {result['memory']}")
 
         await self.affinity.save()
+
+    async def _build_style_description(self, uid: str, name: str, profile: dict | None) -> str:
+        records = self.user_msg_store.get_recent(uid, limit=30)
+        if not records:
+            return f"（没有足够的关于{name}的记忆来模仿说话风格，尽力而为）"
+
+        lines = [f"  {r['name']}：「{r['msg']}」" for r in records if r.get("msg", "").strip()]
+        if not lines:
+            return f"（没有足够的关于{name}的记忆来模仿说话风格，尽力而为）"
+
+        prompt = (
+            f"下面是「{name}」实际说过的话，按时间顺序排列。\n"
+            f"请分析{name}的说话风格、用词习惯、句式特点、常用语气词等，"
+            f"总结成3-5条简短的风格描述，供角色扮演使用。\n"
+            f"只输出风格描述，不要输出其他内容，不要输出分析过程。\n\n"
+            f"{name}说过的话：\n" + "\n".join(lines)
+        )
+
+        try:
+            provider_id = self.context.get_all_providers()[0].meta().id
+        except Exception:
+            logger.warning("模仿风格：无可用 LLM Provider")
+            return f"（无法分析{name}的说话风格）"
+
+        try:
+            resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt,
+                system_prompt="你是一个说话风格分析器，输出简洁的风格描述列表，不要输出任何其他内容。",
+            )
+        except Exception as e:
+            logger.error(f"模仿风格 LLM 分析失败: {e}")
+            return f"（分析{name}说话风格时出错）"
+
+        if not resp or not resp.completion_text:
+            return f"（{name}的说话风格分析返回为空）"
+
+        return resp.completion_text.strip()
 
     @filter.after_message_sent()
     async def send_meme_after_reply(self, event: AstrMessageEvent):
@@ -626,6 +685,55 @@ class Main(Star):
             yield event.plain_result("还没有记录到提示词，先聊一句再来看")
             return
         yield event.plain_result(self._last_full_prompt)
+
+    @filter.command("琪露诺学说话")
+    async def start_imitation(self, event: AstrMessageEvent, target: str = ""):
+        target = target.strip()
+        if not target:
+            yield event.plain_result("哼？你要我学谁说话？告诉我名字或者QQ号啊！")
+            return
+
+        uid = None
+        name = target
+        profile = None
+
+        if self._enable_core_memory:
+            for _uid, p in self.core_memory._profiles.items():
+                if _uid == target or p.get("name", "") == target:
+                    uid = _uid
+                    name = p.get("name", target)
+                    profile = p
+                    break
+
+        if uid is None and target.isdigit():
+            uid = target
+
+        if uid is None and not self._enable_recall_memory:
+            yield event.plain_result(f"我不认识「{target}」……没有这个人的记忆诶")
+            return
+
+        yield event.plain_result(f"嗯……让我想想{name}平时说话是什么样的……")
+
+        style_desc = await self._build_style_description(uid or target, name, profile)
+
+        self._imitation_state = {
+            "target_name": name,
+            "style_desc": style_desc,
+        }
+        logger.info(f"[琪露诺模仿] 开始模仿 {name}({uid})，风格描述: {style_desc[:60]}...")
+        yield event.plain_result(
+            f"好！我知道{name}怎么说话了！\n（风格：{style_desc[:80]}{'…' if len(style_desc) > 80 else ''}）"
+        )
+
+    @filter.command("琪露诺停止模仿")
+    async def stop_imitation(self, event: AstrMessageEvent):
+        if self._imitation_state is None:
+            yield event.plain_result("我现在没有在模仿任何人啊！")
+            return
+        name = self._imitation_state["target_name"]
+        self._imitation_state = None
+        logger.info(f"[琪露诺模仿] 停止模仿 {name}")
+        yield event.plain_result(f"好啦，我不学{name}说话了，恢复成最强的我！")
 
     @filter.command("琪露诺记忆")
     async def debug_memory(self, event: AstrMessageEvent, target: str = ""):
