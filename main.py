@@ -288,6 +288,17 @@ class Main(Star):
                 content = msg.get("content", "")
                 if isinstance(content, str):
                     parts.append(f"[{role}] {content}")
+                elif isinstance(content, list):
+                    text_parts = []
+                    for item in content:
+                        if isinstance(item, dict):
+                            if item.get("type") == "text":
+                                text_parts.append(item.get("text", ""))
+                            elif item.get("type") == "image_url":
+                                text_parts.append("[图片]")
+                            else:
+                                text_parts.append(f"[{item.get('type', '?')}]")
+                    parts.append(f"[{role}] {''.join(text_parts)}")
         parts.append(f"\n=== PROMPT ===\n{req.prompt or ''}")
         self._last_full_prompt = "\n".join(parts)
 
