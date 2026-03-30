@@ -233,3 +233,27 @@ class CoreMemory:
         await self.save()
         self.reset_counter(user_id)
         logger.info(f"核心记忆已更新用户 {profile.get('name', user_id)} 的档案")
+
+    async def add_important_event(self, user_id: str, event_text: str, nickname: str = ""):
+        user_id = str(user_id)
+        profile = self._profiles.get(user_id)
+        if not profile:
+            profile = {
+                "name": nickname or user_id,
+                "relationship": "",
+                "traits": [],
+                "important_events": [],
+                "original_prompt": "",
+                "updated_at": time.time(),
+            }
+            self._profiles[user_id] = profile
+
+        events: list = profile.setdefault("important_events", [])
+        event_text = event_text[:50]
+        if event_text not in events:
+            events.append(event_text)
+            if len(events) > 3:
+                events.pop(0)
+            profile["updated_at"] = time.time()
+            await self.save()
+            logger.info(f"核心记忆：直接写入事件 [{profile.get('name', user_id)}] {event_text}")

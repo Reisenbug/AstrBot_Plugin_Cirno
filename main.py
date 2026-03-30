@@ -354,6 +354,11 @@ class Main(Star):
                 self._slang_msg_counter = 0
                 asyncio.create_task(self._slang_update())
 
+        if self._enable_core_memory and "记住" in bot_reply:
+            asyncio.create_task(self._extract_and_memorize(
+                sender_id, sender_name, user_msg, bot_reply
+            ))
+
         if self._enable_core_memory:
             is_known = self.core_memory.get_profile(sender_id) is not None
             if is_known or self._allow_stranger_profile:
@@ -506,6 +511,51 @@ class Main(Star):
                 logger.info(f"[琪露诺关键事件] 写入核心记忆: {result['memory']}")
 
         await self.affinity.save()
+
+    async def _extract_and_memorize(self, user_id: str, user_name: str, user_msg: str, bot_reply: str):
+        try:
+            provider_id = self.context.get_all_providers()[0].meta().id
+        except Exception:
+            logger.warning("记住触发：无可用 LLM Provider")
+            return
+
+        prompt = (
+            f"琪露诺刚刚说了这句话：「{bot_reply}」\n"
+            f"这是在回应对方说的：「{user_msg}」\n\n"
+            "琪露诺说要记住某件事。请用一句话（不超过25个字）总结她记住了什么，"
+            "用第三人称描述，例如「对方喜欢吃草莓大福」。\n"
+            "只输出那一句话，不加任何前缀或解释。"
+        )
+
+        try:
+            resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt,
+                system_prompt="你是一个信息提取器，只输出一句话，不要任何多余内容。",
+            )
+        except Exception as e:
+            logger.error(f"记住触发 LLM 提取失败: {e}")
+            return
+
+        if not resp or not resp.completion_text:
+            return
+
+        event_text = resp.completion_text.strip()[:50]
+        await self.core_memory.add_important_event(user_id, event_text, nickname=user_name)
+
+        if self._enable_recall_memory:
+            from .recall_memory import extract_keywords
+            kw = extract_keywords(event_text)
+            self.recall_memory._summaries.append({
+                "ts": __import__("time").time(),
+                "ts_start": __import__("time").time(),
+                "text": f"琪露诺特意记住了：{event_text}",
+                "kw": kw,
+                "users": [str(user_id)],
+            })
+            await self.recall_memory.save()
+
+        logger.info(f"[琪露诺记住] {user_name}({user_id}): {event_text}")
 
     async def _build_style_description(self, uid: str, name: str, profile: dict | None) -> str:
         records = self.user_msg_store.get_recent(uid, limit=30)
