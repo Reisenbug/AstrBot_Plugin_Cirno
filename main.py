@@ -93,6 +93,7 @@ class Main(Star):
         self._slang_msg_counter: int = 0
         self._prank_state: dict | None = None
         self._critique_state: dict | None = None
+        self._global_notes: list[str] = []
 
     async def initialize(self):
         import jieba
@@ -119,6 +120,11 @@ class Main(Star):
 
         if self._group_sessions:
             logger.info(f"已加载 {len(self._group_sessions)} 个群聊 session")
+
+        saved_notes = await self.get_kv_data("global_notes", None)
+        if isinstance(saved_notes, list):
+            self._global_notes = saved_notes
+            logger.info(f"全局笔记已加载，共 {len(self._global_notes)} 条")
 
         if self._enable_affinity:
             await self.affinity.load()
@@ -282,6 +288,9 @@ class Main(Star):
                 for e in slang_matches
             )
             req.system_prompt += f"\n【群里的说法】\n{slang_lines}"
+        if self._global_notes:
+            notes_text = "\n".join(f"- {n}" for n in self._global_notes)
+            req.system_prompt += f"\n【你特意记下来的事】\n{notes_text}"
         req.system_prompt += ABSOLUTE_RULES
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_rating_prompt()
@@ -566,19 +575,11 @@ class Main(Star):
             return
 
         event_text = resp.completion_text.strip()[:50]
-        await self.core_memory.add_important_event(user_id, event_text, nickname=user_name)
-
-        if self._enable_recall_memory:
-            from .recall_memory import extract_keywords
-            kw = extract_keywords(event_text)
-            self.recall_memory._summaries.append({
-                "ts": __import__("time").time(),
-                "ts_start": __import__("time").time(),
-                "text": f"琪露诺特意记住了：{event_text}",
-                "kw": kw,
-                "users": [str(user_id)],
-            })
-            await self.recall_memory.save()
+        if event_text and event_text not in self._global_notes:
+            self._global_notes.append(event_text)
+            if len(self._global_notes) > 20:
+                self._global_notes.pop(0)
+            await self.put_kv_data("global_notes", self._global_notes)
 
         logger.info(f"[琪露诺记住] {user_name}({user_id}): {event_text}")
 
