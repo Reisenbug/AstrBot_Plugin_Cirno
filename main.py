@@ -92,6 +92,7 @@ class Main(Star):
         self._known_groups: list[tuple[str, str]] = []
         self._slang_msg_counter: int = 0
         self._prank_state: dict | None = None
+        self._critique_state: dict | None = None
 
     async def initialize(self):
         saved = await self.get_kv_data("state_data", None)
@@ -257,6 +258,9 @@ class Main(Star):
         if self._prank_state is not None:
             req.system_prompt += self._build_prank_prompt(sender_id, sender_nickname)
 
+        if self._critique_state is not None:
+            req.system_prompt += self._build_critique_prompt()
+
         if self._imitation_state is not None:
             tname = self._imitation_state["target_name"]
             style = self._imitation_state["style_desc"]
@@ -395,6 +399,13 @@ class Main(Star):
                     f"[琪露诺戳一戳] 触发! valence={valence:.2f} chance={chance:.2%}"
                 )
 
+        if self._critique_state is not None:
+            self._critique_state = None
+            logger.info("[琪露诺锐评] 锐评结束")
+        elif "锐评" in bot_reply:
+            self._critique_state = {}
+            logger.info("[琪露诺锐评] 进入锐评模式，下一轮生效")
+
         if self._prank_state is not None:
             self._prank_state["turns_left"] -= 1
             if self._prank_state["turns_left"] <= 0:
@@ -443,6 +454,16 @@ class Main(Star):
             f"\n【恶作剧模式】你现在心情特别好，想搞点事情。这条回复请：{behavior}。"
             f"保持自然，像是你真的这么想，不要解释自己在搞恶作剧。"
             f"（剩余 {turns_left} 轮）"
+        )
+
+    def _build_critique_prompt(self) -> str:
+        return (
+            "\n【锐评模式】你刚才说要锐评，现在就是在锐评。"
+            "锐评风格：一针见血、毒舌但有道理、不留情面但不是单纯骂人。"
+            "你会直接点出对方话里最可笑或最矛盾的地方，语气自信甚至傲慢，"
+            "带着「我最聪明所以一眼看穿了」的得意。"
+            "可以用比喻或夸张来强调，但逻辑要站得住脚。"
+            "说完锐评不需要安慰对方，你觉得说真话是帮对方。"
         )
 
     async def _recall_llm_generate(self, prompt: str):
