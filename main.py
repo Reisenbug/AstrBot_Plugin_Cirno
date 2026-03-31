@@ -95,6 +95,10 @@ class Main(Star):
         self._critique_state: dict | None = None
 
     async def initialize(self):
+        import jieba
+        await asyncio.get_event_loop().run_in_executor(None, jieba.lcut, "预热")
+        logger.info("jieba 分词已预热")
+
         saved = await self.get_kv_data("state_data", None)
         if saved and isinstance(saved, dict):
             self.state_manager.from_dict(saved)
