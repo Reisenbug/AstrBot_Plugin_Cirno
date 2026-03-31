@@ -170,6 +170,7 @@ class Main(Star):
 
     @filter.on_llm_request()
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
+        event.set_extra("cirno_llm_start", time.time())
         self.state_manager.on_user_interaction()
         self.state_manager.maybe_transition()
 
@@ -323,6 +324,10 @@ class Main(Star):
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
+        llm_start = event.get_extra("cirno_llm_start")
+        if llm_start:
+            logger.info(f"[琪露诺延迟] LLM 往返耗时 {time.time() - llm_start:.2f}s")
+
         sender_id = str(event.get_sender_id())
         sender_name = event.get_sender_name()
         user_msg = event.message_str or ""
