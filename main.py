@@ -425,9 +425,8 @@ class Main(Star):
             logger.info("[琪露诺锐评] 进入锐评模式，下一轮生效")
 
         if self._prank_state is not None:
-            self._prank_state["turns_left"] -= 1
-            if self._prank_state["turns_left"] <= 0:
-                logger.info("[琪露诺恶作剧] 恶作剧结束")
+            if time.time() >= self._prank_state["expires_at"]:
+                logger.info("[琪露诺恶作剧] 恶作剧时间到，结束")
                 self._prank_state = None
         elif self._enable_affinity and event.session.message_type == MessageType.GROUP_MESSAGE:
             self._maybe_enter_prank(sender_id)
@@ -443,15 +442,15 @@ class Main(Star):
         affinity_factor = 0.3 + 0.7 * (composite / 100.0)  # 0.3~1.0
         chance = mood_factor * affinity_factor * 0.12
         if random.random() < chance:
-            turns = random.randint(4, 8)
+            duration = random.randint(10, 20) * 60
             self._prank_state = {
-                "turns_left": turns,
+                "expires_at": time.time() + duration,
                 "triggered_by": sender_id,
             }
             logger.info(
                 f"[琪露诺恶作剧] 进入恶作剧模式! "
                 f"valence={valence:.2f} composite={composite:.0f} "
-                f"chance={chance:.2%} turns={turns}"
+                f"chance={chance:.2%} duration={duration // 60}min"
             )
 
     def _build_prank_prompt(self, sender_id: str, sender_name: str) -> str:
@@ -467,11 +466,11 @@ class Main(Star):
             "假装完全听不懂对方说的话，对非常正常的句子一直追问「什么意思」，对方越解释越装傻",
         ]
         behavior = random.choice(behaviors)
-        turns_left = self._prank_state["turns_left"] if self._prank_state else 1
+        remaining = max(0, int(self._prank_state["expires_at"] - time.time())) // 60 if self._prank_state else 0
         return (
             f"\n【恶作剧模式】你现在心情特别好，想搞点事情。这条回复请：{behavior}。"
             f"保持自然，像是你真的这么想，不要解释自己在搞恶作剧。"
-            f"（剩余 {turns_left} 轮）"
+            f"（剩余约 {remaining} 分钟）"
         )
 
     def _build_critique_prompt(self) -> str:
@@ -926,7 +925,8 @@ class Main(Star):
                     f"有趣={u['fun']:.2f} 重要={u['importance']:.2f}]"
                 )
         if self._prank_state:
-            lines.append(f"恶作剧模式: 激活，剩余 {self._prank_state['turns_left']} 轮")
+            remaining = max(0, int(self._prank_state["expires_at"] - time.time())) // 60
+            lines.append(f"恶作剧模式: 激活，剩余约 {remaining} 分钟")
         else:
             lines.append("恶作剧模式: 未激活")
         yield event.plain_result("\n".join(lines))
@@ -995,11 +995,12 @@ class Main(Star):
     async def start_prank(self, event: AstrMessageEvent):
         sender_id = str(event.get_sender_id())
         if self._prank_state is not None:
-            yield event.plain_result(f"已经在恶作剧了！还剩 {self._prank_state['turns_left']} 轮。")
+            remaining = max(0, int(self._prank_state["expires_at"] - time.time())) // 60
+            yield event.plain_result(f"已经在恶作剧了！还剩约 {remaining} 分钟。")
             return
-        turns = random.randint(4, 8)
-        self._prank_state = {"turns_left": turns, "triggered_by": sender_id}
-        logger.info(f"[琪露诺恶作剧] 手动触发，turns={turns}")
+        duration = random.randint(10, 20) * 60
+        self._prank_state = {"expires_at": time.time() + duration, "triggered_by": sender_id}
+        logger.info(f"[琪露诺恶作剧] 手动触发，duration={duration // 60}min")
         yield event.plain_result("哼哼……")
 
     @filter.command("琪露诺记忆")
