@@ -172,7 +172,9 @@ class Main(Star):
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         event.set_extra("cirno_llm_start", time.time())
         self.state_manager.on_user_interaction()
-        self.state_manager.maybe_transition()
+        transitioned = self.state_manager.maybe_transition()
+        if transitioned:
+            await self.put_kv_data("state_data", self.state_manager.to_dict())
 
         if event.session.message_type == MessageType.GROUP_MESSAGE:
             umo = event.unified_msg_origin
@@ -319,8 +321,6 @@ class Main(Star):
                     parts.append(f"[{role}] {''.join(text_parts)}")
         parts.append(f"\n=== PROMPT ===\n{req.prompt or ''}")
         self._last_full_prompt = "\n".join(parts)
-
-        await self.put_kv_data("state_data", self.state_manager.to_dict())
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
