@@ -1156,6 +1156,35 @@ class Main(Star):
         else:
             yield event.plain_result(f"未知操作: {action}")
 
+    @filter.command("琪露诺笔记")
+    async def debug_notes(self, event: AstrMessageEvent):
+        if not self._global_notes:
+            yield event.plain_result("笔记本是空的，还没有记住任何事")
+            return
+        lines = [f"【琪露诺的笔记】共 {len(self._global_notes)} 条"]
+        for i, note in enumerate(self._global_notes, 1):
+            lines.append(f"{i}. {note}")
+        yield event.plain_result("\n".join(lines))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("琪露诺删笔记")
+    async def delete_note(self, event: AstrMessageEvent, index: str = ""):
+        index = index.strip()
+        if not index:
+            yield event.plain_result("用法: 琪露诺删笔记 <序号>\n用「琪露诺笔记」查看序号")
+            return
+        try:
+            idx = int(index) - 1
+        except ValueError:
+            yield event.plain_result("序号必须是数字")
+            return
+        if idx < 0 or idx >= len(self._global_notes):
+            yield event.plain_result(f"序号超出范围，当前共 {len(self._global_notes)} 条")
+            return
+        removed = self._global_notes.pop(idx)
+        await self.put_kv_data("global_notes", self._global_notes)
+        yield event.plain_result(f"已删除: {removed}")
+
     async def terminate(self):
         await self.put_kv_data("state_data", self.state_manager.to_dict())
         await self.put_kv_data("group_sessions", list(self._group_sessions))
