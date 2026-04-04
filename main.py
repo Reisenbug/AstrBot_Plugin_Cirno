@@ -442,31 +442,41 @@ class Main(Star):
         affinity_factor = 0.3 + 0.7 * (composite / 100.0)  # 0.3~1.0
         chance = mood_factor * affinity_factor * 0.12
         if random.random() < chance:
-            duration = random.randint(10, 20) * 60
-            self._prank_state = {
-                "expires_at": time.time() + duration,
-                "triggered_by": sender_id,
-            }
+            state = self._start_prank(sender_id)
+            duration = int(state["expires_at"] - time.time()) // 60
             logger.info(
                 f"[琪露诺恶作剧] 进入恶作剧模式! "
                 f"valence={valence:.2f} composite={composite:.0f} "
-                f"chance={chance:.2%} duration={duration // 60}min"
+                f"chance={chance:.2%} duration={duration}min "
+                f"behavior={self.PRANK_BEHAVIORS[state['behavior_idx']][:20]}"
             )
 
+    PRANK_BEHAVIORS = [
+        "一本正经地分析别人说的话，把最普通的话过度解读成意义深远的东西，越认真越好",
+        "突然给{name}起一个奇怪的外号，然后全程叫那个外号，态度理所当然",
+        "故意曲解{name}说的话，理解成完全不同的意思，然后基于错误理解认真回应",
+        "假装不认识{name}，用完全陌生的语气应对，说「你是谁啊」",
+        "假装把{name}认错成另一个人，坚持叫错名字或者说错事",
+        "编造一件{name}最近在群里干的蠢事，描述得绘声绘色像是亲眼目睹",
+        "对{name}说的某件事连续追问「然后呢？」，每次都追一步，完全不管对方答没答",
+        "疯狂附和对方说的话，同意程度极其夸张，好像对方说了什么惊天大道理",
+        "假装完全听不懂对方说的话，对非常正常的句子一直追问「什么意思」，对方越解释越装傻",
+    ]
+
+    def _start_prank(self, triggered_by: str) -> dict:
+        duration = random.randint(10, 20) * 60
+        behavior_idx = random.randint(0, len(self.PRANK_BEHAVIORS) - 1)
+        self._prank_state = {
+            "expires_at": time.time() + duration,
+            "triggered_by": triggered_by,
+            "behavior_idx": behavior_idx,
+        }
+        return self._prank_state
+
     def _build_prank_prompt(self, sender_id: str, sender_name: str) -> str:
-        behaviors = [
-            "一本正经地分析别人说的话，把最普通的话过度解读成意义深远的东西，越认真越好",
-            f"突然给{sender_name}起一个奇怪的外号，然后全程叫那个外号，态度理所当然",
-            f"故意曲解{sender_name}说的话，理解成完全不同的意思，然后基于错误理解认真回应",
-            f"假装不认识{sender_name}，用完全陌生的语气应对，说「你是谁啊」",
-            f"假装把{sender_name}认错成另一个人，坚持叫错名字或者说错事",
-            f"编造一件{sender_name}最近在群里干的蠢事，描述得绘声绘色像是亲眼目睹",
-            f"对{sender_name}说的某件事连续追问「然后呢？」，每次都追一步，完全不管对方答没答",
-            "疯狂附和对方说的话，同意程度极其夸张，好像对方说了什么惊天大道理",
-            "假装完全听不懂对方说的话，对非常正常的句子一直追问「什么意思」，对方越解释越装傻",
-        ]
-        behavior = random.choice(behaviors)
-        remaining = max(0, int(self._prank_state["expires_at"] - time.time())) // 60 if self._prank_state else 0
+        idx = self._prank_state.get("behavior_idx", 0)
+        behavior = self.PRANK_BEHAVIORS[idx % len(self.PRANK_BEHAVIORS)].format(name=sender_name)
+        remaining = max(0, int(self._prank_state["expires_at"] - time.time())) // 60
         return (
             f"\n【恶作剧模式】你现在心情特别好，想搞点事情。这条回复请：{behavior}。"
             f"保持自然，像是你真的这么想，不要解释自己在搞恶作剧。"
@@ -998,9 +1008,9 @@ class Main(Star):
             remaining = max(0, int(self._prank_state["expires_at"] - time.time())) // 60
             yield event.plain_result(f"已经在恶作剧了！还剩约 {remaining} 分钟。")
             return
-        duration = random.randint(10, 20) * 60
-        self._prank_state = {"expires_at": time.time() + duration, "triggered_by": sender_id}
-        logger.info(f"[琪露诺恶作剧] 手动触发，duration={duration // 60}min")
+        state = self._start_prank(sender_id)
+        duration = int(state["expires_at"] - time.time()) // 60
+        logger.info(f"[琪露诺恶作剧] 手动触发，duration={duration}min")
         yield event.plain_result("哼哼……")
 
     @filter.command("琪露诺记忆")
