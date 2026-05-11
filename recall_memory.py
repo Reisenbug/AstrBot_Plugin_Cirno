@@ -50,6 +50,13 @@ def extract_keywords(text: str) -> list[str]:
     return [w.strip() for w in words if w.strip() and w.strip() not in STOP_WORDS and len(w.strip()) > 1]
 
 
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(x * x for x in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
 class RecallMemory:
     def __init__(self, plugin, buffer_limit: int = 15, top_k: int = 3):
         self._plugin = plugin
@@ -61,12 +68,16 @@ class RecallMemory:
         self._digests: list[dict] = []
         self._key_event_callback = None
         self._llm_generate = None
+        self._embed_provider = None
 
     def set_key_event_callback(self, callback):
         self._key_event_callback = callback
 
     def set_llm_generate(self, llm_generate):
         self._llm_generate = llm_generate
+
+    def set_embed_provider(self, provider):
+        self._embed_provider = provider
 
     async def load(self):
         raw = await self._plugin.get_kv_data("recall_summaries", None)
@@ -174,12 +185,21 @@ class RecallMemory:
             users.add(e["uid"])
         kw_unique = list(dict.fromkeys(all_kw))[:30]
 
+        summary_text = resp.completion_text.strip()
+        vec = None
+        if self._embed_provider:
+            try:
+                vec = await self._embed_provider.get_embedding(summary_text)
+            except Exception as e:
+                logger.warning(f"回忆记忆：embedding 生成失败: {e}")
+
         summary = {
             "ts": ts_max,
             "ts_start": ts_min,
-            "text": resp.completion_text.strip(),
+            "text": summary_text,
             "kw": kw_unique,
             "users": list(users),
+            "vec": vec,
         }
         self._summaries.append(summary)
         logger.info(f"回忆记忆：L1 压缩完成，当前 {len(self._summaries)} 条")
@@ -272,6 +292,40 @@ class RecallMemory:
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [entry for _, entry in scored[:top_k]]
+
+    async def search_async(
+        self, query: str, current_user_id: str | None = None, top_k: int | None = None
+    ) -> list[dict]:
+        if not self._embed_provider:
+            return self.search(query, current_user_id, top_k)
+        if top_k is None:
+            top_k = self._top_k
+
+        try:
+            query_vec = await self._embed_provider.get_embedding(query)
+        except Exception as e:
+            logger.warning(f"回忆记忆：query embedding 失败，降级到关键词: {e}")
+            return self.search(query, current_user_id, top_k)
+
+        now = time.time()
+        scored: list[tuple[float, dict]] = []
+        for entry in self._summaries + self._digests:
+            vec = entry.get("vec")
+            if not vec:
+                continue
+            cosine = _cosine(query_vec, vec)
+            age_hours = (now - entry.get("ts", now)) / 3600
+            time_decay = math.exp(-age_hours / (24 * 7))
+            user_bonus = 0.2 if current_user_id and current_user_id in entry.get("users", []) else 0.0
+            score = cosine * 0.6 + time_decay * 0.2 + user_bonus * 0.2
+            scored.append((score, entry))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        results = [entry for _, entry in scored[:top_k]]
+
+        if not results:
+            return self.search(query, current_user_id, top_k)
+        return results
 
     def get_recent_by_user(self, user_id: str, limit: int = 15) -> list[dict]:
         user_id = str(user_id)

@@ -138,6 +138,21 @@ class Main(Star):
             if self._enable_affinity:
                 self.recall_memory.set_key_event_callback(self._on_buffer_key_event)
             await self.recall_memory.load()
+            _mem_cfg = self.config.get("memory_settings", {})
+            if _mem_cfg.get("enable_embedding_recall", False):
+                try:
+                    providers = self.context.get_all_embedding_providers()
+                    pid = _mem_cfg.get("embedding_provider_id", "")
+                    ep = next((p for p in providers if p.meta().id == pid), None) if pid else None
+                    if ep is None and providers:
+                        ep = providers[0]
+                    if ep:
+                        self.recall_memory.set_embed_provider(ep)
+                        logger.info(f"[琪露诺] Embedding 检索已启用: {ep.meta().id}")
+                    else:
+                        logger.warning("[琪露诺] 未找到 Embedding Provider，降级到关键词检索")
+                except Exception as e:
+                    logger.warning(f"[琪露诺] Embedding Provider 初始化失败: {e}")
 
         if self._enable_meme:
             stats = self.meme_selector.get_stats()
@@ -220,7 +235,7 @@ class Main(Star):
         if self._enable_recall_memory and not suppress_recall:
             user_msg = event.message_str or ""
             if user_msg:
-                memories = self.recall_memory.search(
+                memories = await self.recall_memory.search_async(
                     user_msg, current_user_id=sender_id
                 )
                 if memories:

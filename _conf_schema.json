@@ -114,6 +114,18 @@
         "type": "bool",
         "default": true,
         "hint": "关闭后只有种子数据中的用户会被核心记忆记住"
+      },
+      "enable_embedding_recall": {
+        "description": "启用 Embedding 语义检索",
+        "type": "bool",
+        "default": false,
+        "hint": "启用后使用 Embedding Provider 进行语义相似度检索，无 Provider 时自动降级到关键词"
+      },
+      "embedding_provider_id": {
+        "description": "Embedding Provider ID",
+        "type": "string",
+        "default": "",
+        "hint": "指定 Embedding Provider ID，留空则自动取第一个可用的"
       }
     }
   },
