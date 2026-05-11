@@ -232,6 +232,7 @@ class Main(Star):
         suppress_recall = current_category == "rest"
 
         has_recall = False
+        recall_prompt = ""
         if self._enable_recall_memory and not suppress_recall:
             user_msg = event.message_str or ""
             if user_msg:
@@ -248,8 +249,6 @@ class Main(Star):
                         )
                     )
                 recall_prompt = self.recall_memory.build_recall_prompt(memories)
-                if recall_prompt:
-                    req.system_prompt += f"\n{recall_prompt}"
 
         is_random_reply = (
             not event.is_at_or_wake_command
@@ -276,6 +275,8 @@ class Main(Star):
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_status_prompt(sender_id)
 
+        if recall_prompt:
+            req.system_prompt += f"\n{recall_prompt}"
         if has_recall:
             req.system_prompt += (
                 "\n如果对方聊的话题和你记忆中的内容有关，你可以自然地提起你还记得之前聊过的事。"
