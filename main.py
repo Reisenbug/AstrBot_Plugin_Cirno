@@ -20,6 +20,7 @@ from .recall_memory import RecallMemory
 from .state_manager import CirnoStateManager
 from .user_message_store import UserMessageStore
 from .slang_store import SlangStore
+from .group_message_store import GroupMessageStore
 
 try:
     from .local_config import DEFAULT_USER_INFO, ABSOLUTE_RULES
@@ -84,10 +85,13 @@ class Main(Star):
 
         self._group_sessions: set[str] = set()
         self._cron_job_id: str | None = None
+        self._daily_profile_cron_id: str | None = None
+        self._daily_profile_group = "1050431190"
         self._last_full_prompt: str = ""
         self._imitation_state: dict | None = None
         data_dir = str(StarTools.get_data_dir("astrbot_plugin_cirno"))
         self.user_msg_store = UserMessageStore(data_dir)
+        self.group_msg_store = GroupMessageStore(data_dir)
         self.slang_store = SlangStore(data_dir)
         self.slang_store.load()
         self._known_groups: list[tuple[str, str]] = []
@@ -175,6 +179,16 @@ class Main(Star):
             logger.info(
                 f"琪露诺主动发言 cron job 已注册，间隔 {interval} 分钟"
             )
+
+        if self._enable_core_memory:
+            daily_job = await self.context.cron_manager.add_basic_job(
+                name="cirno_daily_profile_update",
+                cron_expression="0 3 * * *",
+                handler=self._daily_profile_update,
+                description="琪露诺每日用户画像更新",
+            )
+            self._daily_profile_cron_id = daily_job.job_id
+            logger.info("琪露诺每日用户画像 cron job 已注册，每日凌晨3点触发")
 
 
     def _replace_at_with_names(self, text: str) -> str:
@@ -406,6 +420,10 @@ class Main(Star):
                 self.jargon_filter.update_from_message(
                     user_msg, f"{platform_id}:{group_id}", sender_id
                 )
+                if group_id == self._daily_profile_group:
+                    self.group_msg_store.append(
+                        group_id, sender_id, sender_name, user_msg, bot_reply or None
+                    )
             self._slang_msg_counter += 1
             if self._slang_msg_counter >= 75:
                 self._slang_msg_counter = 0
@@ -789,6 +807,47 @@ class Main(Star):
             logger.info(f"[琪露诺学习] 新增 {added} 个词，总计 {len(self.slang_store.get_all())} 个")
         else:
             logger.info("[琪露诺学习] 本次未发现新词")
+
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def _on_group_message_all(self, event: AstrMessageEvent):
+        group_id = event.get_group_id()
+        if group_id != self._daily_profile_group:
+            return
+        if event.is_at_or_wake_command:
+            return
+        sender_id = str(event.get_sender_id())
+        sender_name = event.get_sender_name()
+        msg = event.message_str or ""
+        if not msg.strip():
+            return
+        self.group_msg_store.append(group_id, sender_id, sender_name, msg, bot_reply=None)
+
+    async def _daily_profile_update(self):
+        group_id = self._daily_profile_group
+        yesterday = self.group_msg_store.get_yesterday()
+        user_ids = self.group_msg_store.get_users_for_day(group_id, yesterday)
+        if not user_ids:
+            logger.info(f"[琪露诺每日画像] {yesterday} 群 {group_id} 无活跃用户，跳过")
+            return
+
+        logger.info(f"[琪露诺每日画像] 开始更新 {yesterday} 群 {group_id} 共 {len(user_ids)} 名用户")
+        updated = 0
+        for user_id in user_ids:
+            records = self.group_msg_store.get_records(group_id, yesterday, user_id)
+            if not records:
+                continue
+            nickname = records[0].get("name", user_id)
+            try:
+                await self.core_memory.update_profile_from_daily(
+                    user_id, records, self.context, nickname=nickname
+                )
+                updated += 1
+                await asyncio.sleep(2)
+            except Exception as e:
+                logger.error(f"[琪露诺每日画像] 更新用户 {user_id} 失败: {e}")
+
+        self.group_msg_store.cleanup_old(keep_days=3)
+        logger.info(f"[琪露诺每日画像] 完成，更新 {updated}/{len(user_ids)} 名用户")
 
     async def _proactive_check(self):
         self.state_manager.maybe_transition()
@@ -1249,6 +1308,11 @@ class Main(Star):
         if self._cron_job_id:
             try:
                 await self.context.cron_manager.delete_job(self._cron_job_id)
+            except Exception:
+                pass
+        if self._daily_profile_cron_id:
+            try:
+                await self.context.cron_manager.delete_job(self._daily_profile_cron_id)
             except Exception:
                 pass
         logger.info("琪露诺状态系统已保存并清理")

@@ -234,6 +234,20 @@ class CoreMemory:
         self.reset_counter(user_id)
         logger.info(f"核心记忆已更新用户 {profile.get('name', user_id)} 的档案")
 
+    async def update_profile_from_daily(self, user_id: str, records: list[dict], context, nickname: str = ""):
+        """根据当日群消息（含可选 bot_reply）更新用户画像，供每日 cron 调用。"""
+        if not records:
+            return
+
+        lines = []
+        for r in records:
+            lines.append(f"{r['name']}：{r['msg']}")
+            if r.get("bot_reply"):
+                lines.append(f"琪露诺：{r['bot_reply']}")
+        summary = "\n".join(lines)
+
+        await self.update_profile_via_llm(user_id, summary, context, nickname=nickname)
+
     async def add_important_event(self, user_id: str, event_text: str, nickname: str = ""):
         user_id = str(user_id)
         profile = self._profiles.get(user_id)
