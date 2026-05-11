@@ -14,6 +14,7 @@ from astrbot.core.platform.message_type import MessageType
 
 from .affinity import AffinityManager
 from .core_memory import CoreMemory
+from .jargon_filter import JargonStatisticalFilter
 from .meme_sender import MemeSelector
 from .recall_memory import RecallMemory
 from .state_manager import CirnoStateManager
@@ -94,6 +95,8 @@ class Main(Star):
         self._prank_state: dict | None = None
         self._critique_state: dict | None = None
         self._global_notes: list[str] = []
+        self._recent_bot_replies: list[str] = []
+        self.jargon_filter = JargonStatisticalFilter()
 
     async def initialize(self):
         import jieba
@@ -294,6 +297,12 @@ class Main(Star):
         if self._global_notes:
             notes_text = "\n".join(f"- {n}" for n in self._global_notes)
             req.system_prompt += f"\n【你特意记下来的事】\n{notes_text}"
+        if self._recent_bot_replies:
+            recent_str = "、".join(
+                f"「{r[:30]}…」" if len(r) > 30 else f"「{r}」"
+                for r in self._recent_bot_replies
+            )
+            req.system_prompt += f"\n【你最近说过】{recent_str}——避免重复相同的开场白、句式和结尾。"
         req.system_prompt += ABSOLUTE_RULES
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_rating_prompt()
@@ -339,7 +348,7 @@ class Main(Star):
             resp.completion_text = bot_reply
 
         if self._enable_affinity and bot_reply:
-            cleaned, valence_shift, reason = self.affinity.extract_inner(bot_reply)
+            cleaned, valence_shift, reason, interaction_type = self.affinity.extract_inner(bot_reply)
             if cleaned != bot_reply:
                 resp.completion_text = cleaned
                 bot_reply = cleaned
@@ -348,7 +357,7 @@ class Main(Star):
                 from .cirno_states import CIRNO_STATES
                 cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
                 self.affinity.update_emotion(valence_shift, cat)
-                self.affinity.update_affinity(sender_id, valence_shift)
+                self.affinity.update_affinity(sender_id, valence_shift, interaction_type)
                 logger.info(
                     f"[琪露诺情绪] v={self.affinity.valence:.2f} a={self.affinity.arousal:.2f} "
                     f"vuln={self.affinity.vulnerability:.2f} shift={valence_shift:.2f} "
@@ -370,7 +379,17 @@ class Main(Star):
 
         self.user_msg_store.append(sender_id, sender_name, user_msg)
 
+        self._recent_bot_replies.append(bot_reply[:80])
+        if len(self._recent_bot_replies) > 5:
+            self._recent_bot_replies.pop(0)
+
         if event.session.message_type == MessageType.GROUP_MESSAGE:
+            platform_id = event.get_platform_id()
+            group_id = event.get_group_id()
+            if platform_id and group_id and user_msg:
+                self.jargon_filter.update_from_message(
+                    user_msg, f"{platform_id}:{group_id}", sender_id
+                )
             self._slang_msg_counter += 1
             if self._slang_msg_counter >= 75:
                 self._slang_msg_counter = 0
@@ -666,43 +685,50 @@ class Main(Star):
             logger.debug(f"戳一戳发送失败: {e}")
 
     async def _slang_update(self):
-        logger.info("[琪露诺学习] 开始网络用语学习任务")
+        logger.info("[琪露诺学习] 开始网络用语学习任务（统计预过滤模式）")
         if not self._known_groups:
             logger.info("[琪露诺学习] 没有已知群组，跳过")
             return
-        lines = []
+
+        existing_words = {e["word"] for e in self.slang_store.get_all()}
+        all_candidates: list[dict] = []
         for platform_id, group_id in self._known_groups:
-            try:
-                records = await self.context.message_history_manager.get(
-                    platform_id=platform_id,
-                    user_id=group_id,
-                    page_size=200,
-                )
-                for record in records:
-                    content = record.content if isinstance(record.content, dict) else {}
-                    parts = content.get("message", [])
-                    text = " ".join(
-                        p.get("text", "") for p in parts if p.get("type") == "plain"
-                    ).strip()
-                    if text:
-                        lines.append(text)
-            except Exception as e:
-                logger.error(f"[琪露诺学习] 读取群 {group_id} 消息失败: {e}")
-        if not lines:
-            logger.info("[琪露诺学习] 没有可用消息，跳过")
+            group_key = f"{platform_id}:{group_id}"
+            candidates = self.jargon_filter.get_jargon_candidates(
+                group_key, top_k=10, exclude_terms=existing_words
+            )
+            all_candidates.extend(candidates)
+
+        if not all_candidates:
+            logger.info("[琪露诺学习] 统计过滤后无候选词，跳过")
             return
-        existing_words = [e["word"] for e in self.slang_store.get_all()]
+
+        # 按分数去重（多群可能有相同候选词），取分数最高的
+        seen: dict[str, dict] = {}
+        for c in all_candidates:
+            term = c["term"]
+            if term not in seen or c["score"] > seen[term]["score"]:
+                seen[term] = c
+        top_candidates = sorted(seen.values(), key=lambda x: x["score"], reverse=True)[:10]
+
+        # 构建精简 prompt：候选词 + 少量上下文例句
+        cand_lines = []
+        for c in top_candidates:
+            examples = "；".join(c["context_examples"][:3])
+            cand_lines.append(f'「{c["term"]}」（出现{c["frequency"]}次）例：{examples}')
+
         existing_hint = f"已知词汇（不要重复）：{', '.join(existing_words)}\n" if existing_words else ""
         prompt = (
             f"{existing_hint}"
-            "下面是群聊消息记录，请从中识别3-5个群里特有的说法，包括：网络用语、梗、游戏术语、二次元词汇、专业缩写、圈子黑话等。\n"
-            "要求：\n- 只提取有实际含义的特定词汇，不要提取日常普通词汇\n"
-            "- scene字段填写能触发使用这个词的场景关键词，空格分隔，3-6个词\n"
-            "- 如果没有发现新词，返回空数组 []\n"
+            "下面是从群聊中统计筛选出的高频候选词，每个词附有出现次数和上下文例句。\n"
+            "请判断哪些是群里特有的说法（网络用语、梗、游戏术语、二次元词汇、圈子黑话等），\n"
+            "并为确认的词汇提供含义和场景关键词。\n"
+            "如果某个词是普通词汇，跳过它。如果全都是普通词汇，返回空数组 []。\n"
             "只输出合法JSON数组，格式：\n"
             '[{"word": "词", "meaning": "含义", "scene": "关键词1 关键词2 关键词3"}, ...]\n\n'
-            "消息记录：\n" + "\n".join(lines[-200:])
+            "候选词：\n" + "\n".join(cand_lines)
         )
+
         try:
             provider_id = self.context.get_all_providers()[0].meta().id
         except Exception:
@@ -815,7 +841,7 @@ class Main(Star):
 
         text = llm_resp.completion_text
         if self._enable_affinity:
-            cleaned, _, _ = self.affinity.extract_inner(text)
+            cleaned, _, _, _ = self.affinity.extract_inner(text)
             text = cleaned
 
         msg = MessageChain().message(text)

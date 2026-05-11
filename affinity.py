@@ -5,6 +5,16 @@ import time
 
 from astrbot.api import logger
 
+INTERACTION_TYPE_WEIGHTS = {
+    "compliment": {"trust": 1.0, "fun": 0.5, "importance": 0.3},
+    "thanks":     {"trust": 1.2, "fun": 0.2, "importance": 0.2},
+    "tease":      {"trust": 0.3, "fun": 1.5, "importance": 0.1},
+    "care":       {"trust": 0.8, "fun": 0.3, "importance": 0.5},
+    "insult":     {"trust": 1.5, "fun": 0.2, "importance": 0.1},
+    "share":      {"trust": 0.5, "fun": 0.8, "importance": 0.8},
+    "default":    {"trust": 1.0, "fun": 0.3, "importance": 0.1},
+}
+
 AFFINITY_LEVELS = [
     (0, 15, "无视"),
     (16, 30, "讨厌"),
@@ -32,10 +42,11 @@ INNER_PATTERN = re.compile(r"<inner>(.*?)</inner>", re.DOTALL)
 
 RATING_PROMPT = (
     "\n【必须遵守】你的每一条回复末尾都必须附上情绪标签，没有例外。"
-    "格式：<inner>{\"valence_shift\": N, \"reason\": \"一句话\"}</inner>"
+    "格式：<inner>{\"valence_shift\": N, \"interaction_type\": \"类型\", \"reason\": \"一句话\"}</inner>"
     "\nvalence_shift 范围 0~1：0.5=中性，>0.5=正面，<0.5=负面。"
-    "\n示例：被夸可爱→回复内容<inner>{\"valence_shift\": 0.8, \"reason\": \"被夸了好开心\"}</inner>"
-    "\n被骂笨蛋→回复内容<inner>{\"valence_shift\": 0.3, \"reason\": \"被骂了有点气\"}</inner>"
+    "\ninteraction_type 从以下选一个：compliment(被夸赞)/thanks(被感谢)/tease(被调侃)/care(被关心)/insult(被侮辱)/share(对方分享秘密或重要事)/default(普通聊天)"
+    "\n示例：被夸可爱→回复内容<inner>{\"valence_shift\": 0.8, \"interaction_type\": \"compliment\", \"reason\": \"被夸了好开心\"}</inner>"
+    "\n被骂笨蛋→回复内容<inner>{\"valence_shift\": 0.3, \"interaction_type\": \"insult\", \"reason\": \"被骂了有点气\"}</inner>"
     "\n不要在正文中提及这个标签。漏掉标签视为违规。"
 )
 
@@ -204,10 +215,10 @@ class AffinityManager:
     def get_user_data(self, user_id: str) -> dict:
         return self._safe_user_data(user_id)
 
-    def extract_inner(self, bot_reply: str) -> tuple[str, float | None, str | None]:
+    def extract_inner(self, bot_reply: str) -> tuple[str, float | None, str | None, str | None]:
         m = INNER_PATTERN.search(bot_reply)
         if not m:
-            return bot_reply, None, None
+            return bot_reply, None, None, None
         cleaned = bot_reply[:m.start()].rstrip() + bot_reply[m.end():].rstrip()
         cleaned = cleaned.strip()
         try:
@@ -215,9 +226,12 @@ class AffinityManager:
             vs = float(data.get("valence_shift", 0.5))
             vs = max(0.0, min(1.0, vs))
             reason = data.get("reason")
-            return cleaned, vs, reason
+            interaction_type = data.get("interaction_type") or None
+            if interaction_type and interaction_type not in INTERACTION_TYPE_WEIGHTS:
+                interaction_type = None
+            return cleaned, vs, reason, interaction_type
         except (json.JSONDecodeError, ValueError, AttributeError):
-            return cleaned, None, None
+            return cleaned, None, None, None
 
     def update_emotion(self, valence_shift: float, state_category: str):
         e = self._emotion
@@ -245,23 +259,29 @@ class AffinityManager:
         e["arousal"] = max(0.0, min(1.0, e["arousal"]))
         e["vulnerability"] = max(0.0, min(1.0, e["vulnerability"]))
 
-    def update_affinity(self, user_id: str, valence_shift: float):
+    def update_affinity(self, user_id: str, valence_shift: float, interaction_type: str | None = None):
         ud = self._user_data.get(user_id)
         if not ud:
             ud = {"familiarity": 0.0, "trust": 0.5, "fun": 0.5, "importance": 0.0, "last_ts": time.time()}
             self._user_data[user_id] = ud
 
+        weights = INTERACTION_TYPE_WEIGHTS.get(interaction_type or "default", INTERACTION_TYPE_WEIGHTS["default"])
+        intensity = abs(valence_shift - 0.5) * 2
+
         ud["familiarity"] = min(1.0, ud["familiarity"] + 0.005)
 
         if valence_shift > 0.55:
-            ud["trust"] = min(1.0, ud["trust"] + (valence_shift - 0.5) * 0.05)
+            ud["trust"] = min(1.0, ud["trust"] + intensity * 0.05 * weights["trust"])
         elif valence_shift < 0.45:
-            ud["trust"] = max(0.0, ud["trust"] - (0.5 - valence_shift) * 0.08)
+            ud["trust"] = max(0.0, ud["trust"] - intensity * 0.08 * weights["trust"])
 
-        if self._emotion["arousal"] > 0.6:
-            ud["fun"] = min(1.0, ud["fun"] + (self._emotion["arousal"] - 0.5) * 0.03)
+        if self._emotion["arousal"] > 0.6 or interaction_type in ("tease", "share"):
+            ud["fun"] = min(1.0, ud["fun"] + intensity * 0.03 * weights["fun"])
         else:
             ud["fun"] = ud["fun"] * 0.998 + 0.5 * 0.002
+
+        if valence_shift > 0.55:
+            ud["importance"] = min(1.0, ud["importance"] + intensity * 0.02 * weights["importance"])
 
         ud["last_ts"] = time.time()
 
