@@ -122,10 +122,7 @@ class CoreMemory:
             relationship = p.get("relationship", "")
             original = p.get("original_prompt", "")
             events = p.get("important_events", [])
-            parts = [
-                f"\n【当前对话者】QQ号{sender_id}，QQ昵称「{sender_nickname}」。"
-                f"这个人就是{name}，不管昵称看起来像谁，他应该就是{name}。"
-            ]
+            parts = [f"\n【当前对话者】{name}（QQ昵称「{sender_nickname}」）。"]
             if relationship:
                 parts.append(f"你对{name}的印象：{relationship}")
             elif original:
@@ -134,10 +131,7 @@ class CoreMemory:
                 parts.append("你记得和他之间发生过这些事：" + "；".join(events))
             return "".join(parts)
         else:
-            return (
-                f"\n当前和你对话的人QQ号是{sender_id}，QQ昵称是「{sender_nickname}」，"
-                f"你不认识这个人。他大概是人间之里的人类吧，虽然昵称看起来有点眼熟……"
-            )
+            return f"\n当前和你对话的人是「{sender_nickname}」，你不认识这个人。"
 
     @property
     def profile_count(self) -> int:

@@ -167,7 +167,6 @@ class CirnoStateManager:
             if modifier and modifier.get("extra_prompt"):
                 text += f"\n{modifier['extra_prompt']}"
 
-        text += "\n如果你的当前状态和群友聊的话题无关，你不需要强行提起自己在干什么。只有在自然的时候才提到，比如有人问你“在干嘛”，或者当前状态和话题刚好相关。"
         return text
 
     def get_debug_info(self) -> dict:
