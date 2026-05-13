@@ -242,6 +242,7 @@ class Main(Star):
         _CRITIQUE_KEYWORDS = ("评价一下", "评价下", "点评一下", "点评下", "你怎么看", "怎么看这", "锐评", "锐评一下")
         if self._critique_state is None and any(kw in user_msg_text for kw in _CRITIQUE_KEYWORDS):
             self._critique_state = {"topic": user_msg_text[:100]}
+            self._prank_state = None
             logger.info(f"[琪露诺锐评] 触发，话题：{user_msg_text[:40]}")
 
         from .cirno_states import CIRNO_STATES
