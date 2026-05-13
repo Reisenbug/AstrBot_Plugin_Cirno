@@ -202,6 +202,8 @@ class Main(Star):
 
     @filter.on_llm_request()
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
+        if (event.message_str or "").startswith("//"):
+            return
         event.set_extra("cirno_llm_start", time.time())
         self.state_manager.on_user_interaction()
         transitioned = self.state_manager.maybe_transition()
