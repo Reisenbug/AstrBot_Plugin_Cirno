@@ -378,6 +378,8 @@ class Main(Star):
         if bot_reply != (resp.completion_text or ""):
             resp.completion_text = bot_reply
 
+        valence_shift: float | None = None
+        interaction_type: str | None = None
         if self._enable_affinity and bot_reply:
             cleaned, valence_shift, reason, interaction_type = self.affinity.extract_inner(bot_reply)
             if cleaned != bot_reply:
@@ -480,12 +482,23 @@ class Main(Star):
         elif "锐评" in bot_reply:
             self._critique_state = {}
             logger.info("[琪露诺锐评] 进入锐评模式，下一轮生效")
+        elif self._prank_state is None and self._enable_affinity and interaction_type == "insult" and valence_shift is not None and valence_shift < 0.3:
+            if random.random() < 0.4:
+                self._critique_state = {}
+                logger.info("[琪露诺锐评] 被激怒自动触发锐评")
 
         if self._prank_state is not None:
-            if time.time() >= self._prank_state["expires_at"]:
-                logger.info("[琪露诺恶作剧] 恶作剧时间到，结束")
+            if self._prank_state.get("ending"):
                 self._prank_state = None
-        elif self._enable_affinity and event.session.message_type == MessageType.GROUP_MESSAGE:
+                logger.info("[琪露诺恶作剧] 收尾完成，恶作剧结束")
+            elif time.time() >= self._prank_state["expires_at"]:
+                self._prank_state["ending"] = True
+                logger.info("[琪露诺恶作剧] 恶作剧时间到，进入收尾")
+            else:
+                if valence_shift is not None and valence_shift < 0.4:
+                    self._prank_state["escalation"] = self._prank_state.get("escalation", 0) + 1
+                    logger.info(f"[琪露诺恶作剧] 对方反应激烈，升级={self._prank_state['escalation']}")
+        elif self._critique_state is None and self._enable_affinity and event.session.message_type == MessageType.GROUP_MESSAGE:
             self._maybe_enter_prank(sender_id)
 
     def _maybe_enter_prank(self, sender_id: str):
@@ -522,21 +535,33 @@ class Main(Star):
 
     def _start_prank(self, triggered_by: str) -> dict:
         duration = random.randint(10, 20) * 60
-        behavior_idx = random.randint(0, len(self.PRANK_BEHAVIORS) - 1)
+        used = random.sample(range(len(self.PRANK_BEHAVIORS)), min(4, len(self.PRANK_BEHAVIORS)))
         self._prank_state = {
             "expires_at": time.time() + duration,
             "triggered_by": triggered_by,
-            "behavior_idx": behavior_idx,
+            "behavior_pool": used,
+            "escalation": 0,
+            "ending": False,
         }
         return self._prank_state
 
     def _build_prank_prompt(self, sender_id: str, sender_name: str) -> str:
-        idx = self._prank_state.get("behavior_idx", 0)
+        if self._prank_state.get("ending"):
+            return (
+                "\n【恶作剧刚结束】你刚才在搞恶作剧，现在悄悄收手了。"
+                "这条回复假装什么都没发生，自然地回到正常状态，不要解释。"
+            )
+        pool = self._prank_state.get("behavior_pool", [0])
+        idx = random.choice(pool)
         behavior = self.PRANK_BEHAVIORS[idx % len(self.PRANK_BEHAVIORS)].format(name=sender_name)
+        escalation = self._prank_state.get("escalation", 0)
+        escalation_hint = ""
+        if escalation >= 2:
+            escalation_hint = "对方已经有反应了，你越搞越起劲，变本加厉。"
         remaining = max(0, int(self._prank_state["expires_at"] - time.time())) // 60
         return (
             f"\n【恶作剧模式】你现在心情特别好，想搞点事情。这条回复请：{behavior}。"
-            f"保持自然，像是你真的这么想，不要解释自己在搞恶作剧。"
+            f"{escalation_hint}保持自然，像是你真的这么想，不要解释自己在搞恶作剧。"
             f"（剩余约 {remaining} 分钟）"
         )
 
