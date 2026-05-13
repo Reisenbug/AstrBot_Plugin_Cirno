@@ -366,6 +366,9 @@ class Main(Star):
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
+        if (event.message_str or "").startswith("//"):
+            resp.completion_text = ""
+            return
         llm_start = event.get_extra("cirno_llm_start")
         if llm_start:
             logger.info(f"[琪露诺延迟] LLM 往返耗时 {time.time() - llm_start:.2f}s")
