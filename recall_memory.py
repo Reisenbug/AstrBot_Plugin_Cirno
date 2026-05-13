@@ -129,11 +129,12 @@ class RecallMemory:
                 users_in_batch: dict[str, str] = {}
                 for e in batch:
                     users_in_batch[e["uid"]] = e["name"]
-                tasks = [
-                    self._key_event_callback(uid, name, [e for e in batch if e["uid"] == uid])
-                    for uid, name in users_in_batch.items()
-                ]
-                asyncio.create_task(asyncio.gather(*tasks, return_exceptions=True))
+                async def _run_key_events():
+                    await asyncio.gather(*[
+                        self._key_event_callback(uid, name, [e for e in batch if e["uid"] == uid])
+                        for uid, name in users_in_batch.items()
+                    ], return_exceptions=True)
+                asyncio.create_task(_run_key_events())
             asyncio.create_task(self._compress(batch))
 
     def _find_related_summaries(self, batch: list[dict]) -> list[str]:
