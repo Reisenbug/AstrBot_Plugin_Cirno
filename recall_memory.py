@@ -112,13 +112,14 @@ class RecallMemory:
         await self._plugin.put_kv_data("recall_digests", self._digests)
         await self._plugin.put_kv_data("recall_global_count", self._global_count)
 
-    async def archive(self, user_id: str, user_name: str, user_msg: str, bot_reply: str):
+    async def archive(self, user_id: str, user_name: str, user_msg: str, bot_reply: str, group_id: str | None = None):
         self._buffer.append({
             "ts": time.time(),
             "uid": str(user_id),
             "name": user_name,
             "msg": user_msg[:200],
             "reply": bot_reply[:200],
+            "gid": group_id or "",
         })
         self._global_count += 1
 
@@ -195,6 +196,9 @@ class RecallMemory:
             except Exception as e:
                 logger.warning(f"回忆记忆：embedding 生成失败: {e}")
 
+        gids = {e.get("gid", "") for e in batch if e.get("gid")}
+        group_id = gids.pop() if len(gids) == 1 else ""
+
         summary = {
             "ts": ts_max,
             "ts_start": ts_min,
@@ -202,6 +206,7 @@ class RecallMemory:
             "kw": kw_unique,
             "users": list(users),
             "vec": vec,
+            "gid": group_id,
         }
         self._summaries.append(summary)
         logger.info(f"回忆记忆：L1 压缩完成，当前 {len(self._summaries)} 条")
@@ -265,7 +270,7 @@ class RecallMemory:
             logger.info(f"回忆记忆：清理过期记录 {removed} 条")
             await self.save()
 
-    def search(self, query: str, current_user_id: str | None = None, top_k: int | None = None) -> list[dict]:
+    def search(self, query: str, current_user_id: str | None = None, top_k: int | None = None, current_group_id: str | None = None) -> list[dict]:
         if top_k is None:
             top_k = self._top_k
         query_kw = set(extract_keywords(query))
@@ -288,7 +293,9 @@ class RecallMemory:
             age_hours = (now - entry.get("ts", now)) / 3600
             time_decay = math.exp(-age_hours / (24 * 7))
             user_bonus = 0.2 if current_user_id and current_user_id in entry.get("users", []) else 0.0
-            score = kw_score * 0.7 + time_decay * 0.1 + user_bonus
+            entry_gid = entry.get("gid", "")
+            group_factor = 1.0 if (not entry_gid or not current_group_id or entry_gid == current_group_id) else 0.3
+            score = (kw_score * 0.7 + time_decay * 0.1 + user_bonus) * group_factor
 
             scored.append((score, entry))
 
@@ -296,10 +303,11 @@ class RecallMemory:
         return [entry for _, entry in scored[:top_k]]
 
     async def search_async(
-        self, query: str, current_user_id: str | None = None, top_k: int | None = None
+        self, query: str, current_user_id: str | None = None, top_k: int | None = None,
+        current_group_id: str | None = None
     ) -> list[dict]:
         if not self._embed_provider:
-            return self.search(query, current_user_id, top_k)
+            return self.search(query, current_user_id, top_k, current_group_id)
         if top_k is None:
             top_k = self._top_k
 
@@ -307,7 +315,7 @@ class RecallMemory:
             query_vec = await self._embed_provider.get_embedding(query)
         except Exception as e:
             logger.warning(f"回忆记忆：query embedding 失败，降级到关键词: {e}")
-            return self.search(query, current_user_id, top_k)
+            return self.search(query, current_user_id, top_k, current_group_id)
 
         now = time.time()
         scored: list[tuple[float, dict]] = []
@@ -319,14 +327,16 @@ class RecallMemory:
             age_hours = (now - entry.get("ts", now)) / 3600
             time_decay = math.exp(-age_hours / (24 * 7))
             user_bonus = 0.2 if current_user_id and current_user_id in entry.get("users", []) else 0.0
-            score = cosine * 0.6 + time_decay * 0.2 + user_bonus * 0.2
+            entry_gid = entry.get("gid", "")
+            group_factor = 1.0 if (not entry_gid or not current_group_id or entry_gid == current_group_id) else 0.3
+            score = (cosine * 0.6 + time_decay * 0.2 + user_bonus * 0.2) * group_factor
             scored.append((score, entry))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         results = [entry for _, entry in scored[:top_k]]
 
         if not results:
-            return self.search(query, current_user_id, top_k)
+            return self.search(query, current_user_id, top_k, current_group_id)
         return results
 
     def get_recent_by_user(self, user_id: str, limit: int = 15) -> list[dict]:

@@ -251,7 +251,8 @@ class Main(Star):
             user_msg = event.message_str or ""
             if user_msg:
                 memories = await self.recall_memory.search_async(
-                    user_msg, current_user_id=sender_id
+                    user_msg, current_user_id=sender_id,
+                    current_group_id=event.get_group_id() or None
                 )
                 if memories:
                     has_recall = True
@@ -404,7 +405,10 @@ class Main(Star):
             return
 
         if self._enable_recall_memory:
-            await self.recall_memory.archive(sender_id, sender_name, user_msg, bot_reply)
+            await self.recall_memory.archive(
+                sender_id, sender_name, user_msg, bot_reply,
+                group_id=event.get_group_id() or None
+            )
             logger.info(f"[琪露诺回忆归档] {sender_name}({sender_id}): {user_msg[:30]}")
 
         self.user_msg_store.append(sender_id, sender_name, user_msg)
