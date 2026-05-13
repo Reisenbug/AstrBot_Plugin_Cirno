@@ -479,13 +479,9 @@ class Main(Star):
         if self._critique_state is not None:
             self._critique_state = None
             logger.info("[琪露诺锐评] 锐评结束")
-        elif "锐评" in bot_reply:
-            self._critique_state = {}
-            logger.info("[琪露诺锐评] 进入锐评模式，下一轮生效")
-        elif self._prank_state is None and self._enable_affinity and interaction_type == "insult" and valence_shift is not None and valence_shift < 0.3:
-            if random.random() < 0.4:
-                self._critique_state = {}
-                logger.info("[琪露诺锐评] 被激怒自动触发锐评")
+        elif any(kw in user_msg for kw in ("评价一下", "评价下", "点评一下", "点评下", "你怎么看", "怎么看这")):
+            self._critique_state = {"topic": user_msg[:100]}
+            logger.info(f"[琪露诺锐评] 触发，话题：{user_msg[:40]}")
 
         if self._prank_state is not None:
             if self._prank_state.get("ending"):
@@ -565,13 +561,15 @@ class Main(Star):
         )
 
     def _build_critique_prompt(self) -> str:
+        topic = self._critique_state.get("topic", "") if self._critique_state else ""
+        topic_hint = f"评价对象：「{topic}」。" if topic else ""
         return (
-            "\n【锐评模式】你刚才说要锐评，现在就是在锐评。"
-            "锐评风格：一针见血、毒舌但有道理、不留情面但不是单纯骂人。"
-            "你会直接点出对方话里最可笑或最矛盾的地方，语气自信甚至傲慢，"
-            "带着「我最聪明所以一眼看穿了」的得意。"
-            "可以用比喻或夸张来强调，但逻辑要站得住脚。"
-            "说完锐评不需要安慰对方，你觉得说真话是帮对方。"
+            f"\n【点评模式】有人请你评价一件事，你决定认真说说你的看法。{topic_hint}"
+            "用琪露诺的方式点评：一本正经、自以为看穿了一切、逻辑有点歪但说得头头是道。"
+            "先说你对这件事的第一反应，然后展开分析——可以从幻想乡的视角类比，"
+            "可以指出你觉得最可笑或最有意思的地方，可以夸张但要言之有物。"
+            "语气自信傲慢，带着「本天才见多识广」的得意，但偶尔会暴露自己其实没太懂。"
+            "回复必须足够长，至少说三个点，不能敷衍。"
         )
 
     async def _recall_llm_generate(self, prompt: str):
