@@ -230,14 +230,19 @@ class Main(Star):
             f"消息={event.message_str[:50] if event.message_str else ''}"
         )
 
+        user_msg_text = event.message_str or ""
         if self._enable_core_memory:
-            user_msg_text = event.message_str or ""
             user_msg_text = self._replace_at_with_names(user_msg_text)
             people_prompt = self.core_memory.build_people_prompt(user_msg_text, sender_id)
             if people_prompt:
                 req.system_prompt += f"\n{people_prompt}"
         else:
             req.system_prompt += "\n你认识一些人，但现在记忆模糊。"
+
+        _CRITIQUE_KEYWORDS = ("评价一下", "评价下", "点评一下", "点评下", "你怎么看", "怎么看这", "锐评", "锐评一下")
+        if self._critique_state is None and any(kw in user_msg_text for kw in _CRITIQUE_KEYWORDS):
+            self._critique_state = {"topic": user_msg_text[:100]}
+            logger.info(f"[琪露诺锐评] 触发，话题：{user_msg_text[:40]}")
 
         from .cirno_states import CIRNO_STATES
         current_category = CIRNO_STATES.get(
@@ -484,9 +489,6 @@ class Main(Star):
         if self._critique_state is not None:
             self._critique_state = None
             logger.info("[琪露诺锐评] 锐评结束")
-        elif any(kw in user_msg for kw in ("评价一下", "评价下", "点评一下", "点评下", "你怎么看", "怎么看这")):
-            self._critique_state = {"topic": user_msg[:100]}
-            logger.info(f"[琪露诺锐评] 触发，话题：{user_msg[:40]}")
 
         if self._prank_state is not None:
             if self._prank_state.get("ending"):
