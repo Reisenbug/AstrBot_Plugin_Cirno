@@ -835,20 +835,22 @@ class Main(Star):
             return
 
         logger.info(f"[琪露诺每日画像] 开始更新 {yesterday} 群 {group_id} 共 {len(user_ids)} 名用户")
-        updated = 0
-        for user_id in user_ids:
+        async def _update_one(user_id: str):
             records = self.group_msg_store.get_records(group_id, yesterday, user_id)
             if not records:
-                continue
+                return False
             nickname = records[0].get("name", user_id)
             try:
                 await self.core_memory.update_profile_from_daily(
                     user_id, records, self.context, nickname=nickname
                 )
-                updated += 1
-                await asyncio.sleep(2)
+                return True
             except Exception as e:
                 logger.error(f"[琪露诺每日画像] 更新用户 {user_id} 失败: {e}")
+                return False
+
+        results = await asyncio.gather(*[_update_one(uid) for uid in user_ids], return_exceptions=True)
+        updated = sum(1 for r in results if r is True)
 
         self.group_msg_store.cleanup_old(keep_days=3)
         logger.info(f"[琪露诺每日画像] 完成，更新 {updated}/{len(user_ids)} 名用户")
