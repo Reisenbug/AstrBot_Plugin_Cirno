@@ -106,6 +106,7 @@ class Main(Star):
         self._fact_writeback_cooldown: int = memory_cfg.get("fact_writeback_cooldown", 120)
         self._fact_writeback_last: dict[str, float] = {}
         self.heart_flow = HeartFlow()
+        self._poke_streaks: dict[str, dict] = {}
 
     async def initialize(self):
         import jieba
@@ -1078,32 +1079,7 @@ class Main(Star):
                 meme_msg = MessageChain(chain=[Image.fromFileSystem(meme_path)])
                 await self.context.send_message(session_str, meme_msg)
 
-    POKE_RESPONSES = {
-        "positive": [
-            "诶嘿~你戳我干嘛！想跟最强的我玩吗？",
-            "哇！干嘛戳我啦！再戳就把你冻成冰棍！",
-            "嘿嘿，你戳我一下我就戳你一下！",
-            "别戳了别戳了！痒！",
-            "哼，就只有你敢戳最强的我！",
-        ],
-        "neutral": [
-            "……干嘛？",
-            "戳戳戳，你烦不烦啊",
-            "有事说事，别戳",
-            "再戳把你手指冻住哦",
-        ],
-        "negative": [
-            "别碰我！",
-            "……",
-            "烦死了",
-            "滚",
-        ],
-        "rest": [
-            "嗯？……我在想事情呢……别戳",
-            "吵什么啦……我在思考宇宙的奥秘……",
-            "唔……等一下……我刚才想到一个超厉害的点子……忘了",
-        ],
-    }
+    _POKE_COOLDOWN = 60  # seconds before poke streak resets
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_poke(self, event: AstrMessageEvent):
@@ -1120,23 +1096,43 @@ class Main(Star):
             return
 
         sender_id = str(event.get_sender_id())
+        sender_name = event.get_sender_name()
+        now = time.time()
+
+        # streak tracking
+        streak_info = self._poke_streaks.get(sender_id, {"count": 0, "last_ts": 0})
+        if now - streak_info["last_ts"] > self._POKE_COOLDOWN:
+            streak_info["count"] = 0
+        streak_info["count"] += 1
+        streak_info["last_ts"] = now
+        self._poke_streaks[sender_id] = streak_info
+        count = streak_info["count"]
 
         from .cirno_states import CIRNO_STATES
         cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
-        if cat == "rest":
-            pool = self.POKE_RESPONSES["rest"]
-        elif self._enable_affinity:
-            level = self.affinity.get_level(sender_id)
-            if level in ("无视", "讨厌"):
-                pool = self.POKE_RESPONSES["negative"]
-            elif level in ("喜欢", "很喜欢"):
-                pool = self.POKE_RESPONSES["positive"]
-            else:
-                pool = self.POKE_RESPONSES["neutral"]
-        else:
-            pool = self.POKE_RESPONSES["neutral"]
+        level = self.affinity.get_level(sender_id) if self._enable_affinity else "普通"
+        is_liked = level in ("喜欢", "很喜欢")
+        is_disliked = level in ("无视", "讨厌")
 
-        yield event.plain_result(random.choice(pool))
+        # 第4次及以上：固定沉默
+        if count >= 4:
+            reply = "……（不理你了）" if is_liked else "..."
+            yield event.plain_result(reply)
+            return
+
+        # rest状态：固定回复
+        if cat == "rest":
+            rest_pool = [
+                "嗯？……我在想事情呢……别戳",
+                "吵什么啦……我在思考宇宙的奥秘……",
+                "唔……等一下……我刚才想到一个超厉害的点子……忘了",
+            ]
+            yield event.plain_result(random.choice(rest_pool))
+            return
+
+        # 第1-3次：LLM动态生成
+        reply = await self._generate_poke_reply(sender_id, sender_name, count, level, is_liked, is_disliked)
+        yield event.plain_result(reply)
 
         if random.random() < 0.2:
             bot = getattr(event, "bot", None)
@@ -1150,6 +1146,72 @@ class Main(Star):
                     )
                 except Exception:
                     pass
+
+    async def _generate_poke_reply(
+        self, sender_id: str, sender_name: str,
+        count: int, level: str, is_liked: bool, is_disliked: bool
+    ) -> str:
+        fallback_pool = {
+            1: ["诶？干嘛？", "……干嘛戳我", "哼，戳我干嘛啦"],
+            2: ["又戳？", "……还戳", "说话啊"],
+            3: ["烦死了", "不理你了", "……"],
+        }
+        try:
+            provider_id = self.context.get_all_providers()[0].meta().id
+        except Exception:
+            return random.choice(fallback_pool.get(count, ["..."]))
+
+        state_label = self.state_manager.get_prompt_injection()[:40]
+        sender_prompt = self.core_memory.build_sender_prompt(sender_id, sender_name) if self._enable_core_memory else f"对方叫{sender_name}"
+        affinity_prompt = self.affinity.build_status_prompt(sender_id) if self._enable_affinity else ""
+        warmth = self.affinity.get_warmth(sender_id) if self._enable_affinity else None
+
+        if count == 1:
+            situation = "对方刚刚戳了你一下，你刚回过神来。"
+        elif count == 2:
+            situation = "对方戳了你两下，不说话，就只是戳。你有点疑惑。"
+        else:
+            if is_liked:
+                situation = "对方戳了你三下，一句话不说。你假装烦但有点藏不住，不耐烦里带着一丝在意。"
+            elif is_disliked:
+                situation = "对方已经戳了你三下，你已经很烦了，勉强回一句就想结束。"
+            else:
+                situation = "对方戳了你三下，一句话不说。你开始真的不耐烦了，语气敷衍。"
+
+        warmth_hint = ""
+        if warmth is not None:
+            if warmth < 0.4:
+                warmth_hint = "最近你们互动感觉有点冷，你对他没那么热情。"
+            elif warmth > 0.65:
+                warmth_hint = "最近互动挺愉快的，心里对他印象不错。"
+
+        prompt = (
+            f"{situation}{warmth_hint}\n"
+            f"当前状态：{state_label}\n"
+            f"{sender_prompt}{affinity_prompt}\n\n"
+            "用琪露诺的口气回应这次戳一戳。要求：\n"
+            "- 只说一句话，简短（10字以内）\n"
+            "- 不要解释自己的感受，直接说\n"
+            "- 符合上面描述的情绪和关系\n"
+            "直接输出那句话，不加任何前缀。"
+        )
+
+        try:
+            resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt,
+                system_prompt="你是琪露诺，只输出一句简短回应，不超过15字。",
+            )
+        except Exception:
+            return random.choice(fallback_pool.get(count, ["..."]))
+
+        if not resp or not resp.completion_text:
+            return random.choice(fallback_pool.get(count, ["..."]))
+
+        text = resp.completion_text.strip()
+        if self._enable_affinity:
+            text, _, _, _ = self.affinity.extract_inner(text)
+        return text
 
     @filter.command("琪露诺状态")
     async def debug_state(self, event: AstrMessageEvent):
