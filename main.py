@@ -208,6 +208,7 @@ class Main(Star):
     @filter.on_llm_request()
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         if (event.message_str or "").startswith("//"):
+            event.stop_event()
             return
         event.set_extra("cirno_llm_start", time.time())
         self.state_manager.on_user_interaction()
@@ -288,14 +289,14 @@ class Main(Star):
             interest = self.heart_flow.get_interest(session_id)
             if not self.heart_flow.should_engage(session_id, base_chance=1.0):
                 logger.info(f"[HeartFlow] 兴趣度={interest:.2f}，放弃随机插嘴")
-                req.system_prompt = ""
+                event.stop_event()
                 return
             logger.info(f"[HeartFlow] 兴趣度={interest:.2f}，继续插嘴")
 
             gate_decision = await self._timing_gate(user_msg_text, sender_nickname)
             if not gate_decision:
                 logger.info(f"[TimingGate] 决定不插嘴: {user_msg_text[:40]}")
-                req.system_prompt = ""
+                event.stop_event()
                 return
             logger.info(f"[TimingGate] 决定插嘴")
 
@@ -394,9 +395,6 @@ class Main(Star):
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
-        if (event.message_str or "").startswith("//"):
-            resp.completion_text = ""
-            return
         llm_start = event.get_extra("cirno_llm_start")
         if llm_start:
             logger.info(f"[琪露诺延迟] LLM 往返耗时 {time.time() - llm_start:.2f}s")
