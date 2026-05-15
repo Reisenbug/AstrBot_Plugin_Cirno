@@ -1,4 +1,5 @@
 import asyncio
+import json
 import random
 import re
 import time
@@ -451,6 +452,11 @@ class Main(Star):
                 sender_id, sender_name, user_msg, bot_reply
             ))
 
+        if self._enable_core_memory and len(user_msg) > 15:
+            asyncio.create_task(self._writeback_user_facts(
+                sender_id, sender_name, user_msg, bot_reply
+            ))
+
         if self._enable_core_memory:
             is_known = self.core_memory.get_profile(sender_id) is not None
             if is_known or self._allow_stranger_profile:
@@ -683,6 +689,48 @@ class Main(Star):
             await self.put_kv_data("global_notes", self._global_notes)
 
         logger.info(f"[琪露诺记住] {user_name}({user_id}): {event_text}")
+
+    _WRITEBACK_SKIP_PATTERNS = ("哈哈", "哦", "好的", "嗯", "啊", "是的", "对啊", "好啊", "没事", "随便", "不知道")
+
+    async def _writeback_user_facts(self, user_id: str, user_name: str, user_msg: str, bot_reply: str):
+        if any(user_msg.strip().startswith(p) and len(user_msg.strip()) < 10 for p in self._WRITEBACK_SKIP_PATTERNS):
+            return
+        try:
+            provider_id = self.context.get_all_providers()[0].meta().id
+        except Exception:
+            return
+
+        profile = self.core_memory.get_profile(user_id)
+        existing_events = profile.get("important_events", []) if profile else []
+        existing_hint = f"已知事件（不要重复）：{'；'.join(existing_events)}\n" if existing_events else ""
+
+        prompt = (
+            f"{existing_hint}"
+            f"对话者{user_name}说：「{user_msg}」\n"
+            f"琪露诺回答：「{bot_reply[:100]}」\n\n"
+            "从对话者说的话中提取稳定的个人事实（兴趣、习惯、经历、身份等），用一句话描述。"
+            "要求：必须有用户的明确陈述作为依据，不能推测。如果没有值得记录的新事实，输出 null。\n"
+            "只输出一句话（不超过20字）或 null，不加任何前缀。"
+        )
+
+        try:
+            resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt,
+                system_prompt="你是一个信息提取器，只输出一句话或null。",
+            )
+        except Exception as e:
+            logger.debug(f"[事实回写] LLM 调用失败: {e}")
+            return
+
+        if not resp or not resp.completion_text:
+            return
+        text = resp.completion_text.strip()
+        if not text or text.lower() == "null" or text == "无" or len(text) < 4:
+            return
+
+        await self.core_memory.add_important_event(user_id, text, nickname=user_name)
+        logger.info(f"[事实回写] {user_name}({user_id}): {text}")
 
     async def _build_style_description(self, uid: str, name: str, profile: dict | None) -> str:
         records = self.user_msg_store.get_recent(uid, limit=30)

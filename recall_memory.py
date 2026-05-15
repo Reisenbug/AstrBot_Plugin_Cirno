@@ -1,6 +1,7 @@
 import asyncio
 import math
 import time
+from collections import Counter
 
 import jieba
 
@@ -56,6 +57,22 @@ def _cosine(a: list[float], b: list[float]) -> float:
     na = sum(x * x for x in a) ** 0.5
     nb = sum(x * x for x in b) ** 0.5
     return dot / (na * nb) if na and nb else 0.0
+
+
+def _bm25_score(query_kw: list[str], entry_kw: list[str], corpus_avg_len: float, k1: float = 1.5, b: float = 0.75) -> float:
+    """Simple BM25 score without IDF (single-document scoring against query terms)."""
+    if not entry_kw or not query_kw:
+        return 0.0
+    tf = Counter(entry_kw)
+    doc_len = len(entry_kw)
+    score = 0.0
+    for term in set(query_kw):
+        if term not in tf:
+            continue
+        f = tf[term]
+        norm = k1 * (1 - b + b * doc_len / max(corpus_avg_len, 1))
+        score += (f * (k1 + 1)) / (f + norm)
+    return score
 
 
 class RecallMemory:
@@ -273,34 +290,37 @@ class RecallMemory:
             logger.info(f"回忆记忆：清理过期记录 {removed} 条")
             await self.save()
 
+    def _score_entry_bm25(
+        self, query_kw: list[str], entry: dict, corpus_avg_len: float,
+        current_user_id: str | None, current_group_id: str | None, now: float
+    ) -> float:
+        entry_kw = entry.get("kw", [])
+        bm25 = _bm25_score(query_kw, entry_kw, corpus_avg_len)
+        if bm25 <= 0:
+            return 0.0
+        age_hours = (now - entry.get("ts", now)) / 3600
+        time_decay = math.exp(-age_hours / (24 * 7))
+        user_bonus = 0.2 if current_user_id and current_user_id in entry.get("users", []) else 0.0
+        entry_gid = entry.get("gid", "")
+        group_factor = 1.0 if (not entry_gid or not current_group_id or entry_gid == current_group_id) else 0.3
+        return (bm25 * 0.7 + time_decay * 0.1 + user_bonus) * group_factor
+
     def search(self, query: str, current_user_id: str | None = None, top_k: int | None = None, current_group_id: str | None = None) -> list[dict]:
         if top_k is None:
             top_k = self._top_k
-        query_kw = set(extract_keywords(query))
+        query_kw = extract_keywords(query)
         if not query_kw:
             return []
 
+        all_entries = self._summaries + self._digests
+        corpus_avg_len = sum(len(e.get("kw", [])) for e in all_entries) / max(len(all_entries), 1)
         now = time.time()
+
         scored: list[tuple[float, dict]] = []
-
-        for entry in self._summaries + self._digests:
-            entry_kw = set(entry.get("kw", []))
-            if not entry_kw:
-                continue
-
-            overlap = len(query_kw & entry_kw)
-            if overlap < 2:
-                continue
-
-            kw_score = overlap / max(len(query_kw), 1)
-            age_hours = (now - entry.get("ts", now)) / 3600
-            time_decay = math.exp(-age_hours / (24 * 7))
-            user_bonus = 0.2 if current_user_id and current_user_id in entry.get("users", []) else 0.0
-            entry_gid = entry.get("gid", "")
-            group_factor = 1.0 if (not entry_gid or not current_group_id or entry_gid == current_group_id) else 0.3
-            score = (kw_score * 0.7 + time_decay * 0.1 + user_bonus) * group_factor
-
-            scored.append((score, entry))
+        for entry in all_entries:
+            score = self._score_entry_bm25(query_kw, entry, corpus_avg_len, current_user_id, current_group_id, now)
+            if score > 0:
+                scored.append((score, entry))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [entry for _, entry in scored[:top_k]]
@@ -309,20 +329,36 @@ class RecallMemory:
         self, query: str, current_user_id: str | None = None, top_k: int | None = None,
         current_group_id: str | None = None
     ) -> list[dict]:
-        if not self._embed_provider:
-            return self.search(query, current_user_id, top_k, current_group_id)
         if top_k is None:
             top_k = self._top_k
 
+        all_entries = self._summaries + self._digests
+        if not all_entries:
+            return []
+
+        # BM25 path (always runs)
+        query_kw = extract_keywords(query)
+        corpus_avg_len = sum(len(e.get("kw", [])) for e in all_entries) / max(len(all_entries), 1)
+        now = time.time()
+        bm25_scored: list[tuple[float, dict]] = []
+        for entry in all_entries:
+            score = self._score_entry_bm25(query_kw, entry, corpus_avg_len, current_user_id, current_group_id, now)
+            if score > 0:
+                bm25_scored.append((score, entry))
+        bm25_scored.sort(key=lambda x: x[0], reverse=True)
+
+        if not self._embed_provider:
+            return [e for _, e in bm25_scored[:top_k]]
+
+        # Semantic path
         try:
             query_vec = await self._embed_provider.get_embedding(query)
         except Exception as e:
-            logger.warning(f"回忆记忆：query embedding 失败，降级到关键词: {e}")
-            return self.search(query, current_user_id, top_k, current_group_id)
+            logger.warning(f"回忆记忆：query embedding 失败，降级到BM25: {e}")
+            return [e for _, e in bm25_scored[:top_k]]
 
-        now = time.time()
-        scored: list[tuple[float, dict]] = []
-        for entry in self._summaries + self._digests:
+        vec_scored: list[tuple[float, dict]] = []
+        for entry in all_entries:
             vec = entry.get("vec")
             if not vec:
                 continue
@@ -333,14 +369,27 @@ class RecallMemory:
             entry_gid = entry.get("gid", "")
             group_factor = 1.0 if (not entry_gid or not current_group_id or entry_gid == current_group_id) else 0.3
             score = (cosine * 0.6 + time_decay * 0.2 + user_bonus * 0.2) * group_factor
-            scored.append((score, entry))
+            vec_scored.append((score, entry))
+        vec_scored.sort(key=lambda x: x[0], reverse=True)
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        results = [entry for _, entry in scored[:top_k]]
+        if not vec_scored:
+            return [e for _, e in bm25_scored[:top_k]]
 
-        if not results:
-            return self.search(query, current_user_id, top_k, current_group_id)
-        return results
+        # RRF fusion (k=60, vector_weight=0.7, bm25_weight=0.3)
+        RRF_K = 60
+        rrf: dict[int, float] = {}
+        id_to_entry: dict[int, dict] = {}
+        for rank, (_, entry) in enumerate(vec_scored):
+            eid = id(entry)
+            rrf[eid] = rrf.get(eid, 0.0) + 0.7 / (RRF_K + rank + 1)
+            id_to_entry[eid] = entry
+        for rank, (_, entry) in enumerate(bm25_scored):
+            eid = id(entry)
+            rrf[eid] = rrf.get(eid, 0.0) + 0.3 / (RRF_K + rank + 1)
+            id_to_entry[eid] = entry
+
+        fused = sorted(rrf.items(), key=lambda x: x[1], reverse=True)
+        return [id_to_entry[eid] for eid, _ in fused[:top_k]]
 
     def get_recent_by_user(self, user_id: str, limit: int = 15) -> list[dict]:
         user_id = str(user_id)
