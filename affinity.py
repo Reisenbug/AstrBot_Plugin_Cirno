@@ -89,6 +89,8 @@ class AffinityManager:
         self._user_data: dict[str, dict] = {}
         self._event_counters: dict[str, int] = {}
         self._recent_interactions: dict[str, list[float]] = {}
+        self._valence_history: dict[str, list[float]] = {}  # user_id -> recent valence_shifts
+        self._WARMTH_WINDOW = 10
 
     @staticmethod
     def _daily_hash(seed: str) -> float:
@@ -285,6 +287,10 @@ class AffinityManager:
 
         ud["last_ts"] = time.time()
 
+        history = self._valence_history.get(user_id, [])
+        history.append(valence_shift)
+        self._valence_history[user_id] = history[-self._WARMTH_WINDOW:]
+
     def update_key_event(self, user_id: str, dimension: str, delta: float):
         ud = self._user_data.get(user_id)
         if not ud:
@@ -317,6 +323,12 @@ class AffinityManager:
         if count <= self._boredom_threshold:
             return 0.0
         return min(1.0, (count - self._boredom_threshold) / self._boredom_threshold)
+
+    def get_warmth(self, user_id: str) -> float | None:
+        history = self._valence_history.get(user_id, [])
+        if len(history) < 3:
+            return None
+        return sum(history) / len(history)
 
     def build_status_prompt(self, user_id: str) -> str:
         composite = self.get_composite(user_id)
@@ -380,6 +392,13 @@ class AffinityManager:
             cross += "聊太久了，心里开始有点烦躁，注意力涣散，想找借口结束。"
         elif boredom >= 0.4:
             cross += "聊了一阵，注意力开始飘，有点不在状态。"
+
+        warmth = self.get_warmth(user_id)
+        if warmth is not None:
+            if warmth < 0.4:
+                cross += "最近几次互动感觉对方有点冷淡，心里有点不是滋味，说话会不自觉更在意对方的反应。"
+            elif warmth > 0.65:
+                cross += "最近互动感觉挺好的，心里放松，不用太拘谨。"
 
         return f"\n【对当前对话者的好感度：{level}（{composite:.0f}/100）】{cross}"
 
