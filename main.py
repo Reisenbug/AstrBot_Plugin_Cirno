@@ -330,6 +330,11 @@ class Main(Star):
                 "不要生硬地复述记忆内容，而是像真的想起来了一样随口带一嘴。"
             )
 
+        poke_info = self._poke_streaks.get(sender_id, {})
+        if poke_info.get("angry") and time.time() - poke_info.get("last_ts", 0) < self._POKE_COOLDOWN * 2:
+            req.system_prompt += "\n【刚才的事】这个人刚才一直戳你不说话，你被烦到有点生气，还没完全消气。这条回复带点余怒，语气硬一点，但不用特别点明原因。"
+            self._poke_streaks[sender_id]["angry"] = False
+
         req.system_prompt += (
             "\n如果用户用括号描述情景或旁白，你知道这是在演戏、开玩笑。"
             "你可以配合玩但不要入戏太深，保持琪露诺的正常状态，不要被剧情带走。"
@@ -1120,6 +1125,10 @@ class Main(Star):
             yield event.plain_result(reply)
             return
 
+        # 第3次：记录生气状态，溢出到后续对话
+        if count == 3:
+            self._poke_streaks[sender_id]["angry"] = True
+
         # rest状态：固定回复
         if cat == "rest":
             rest_pool = [
@@ -1134,7 +1143,8 @@ class Main(Star):
         reply = await self._generate_poke_reply(sender_id, sender_name, count, level, is_liked, is_disliked)
         yield event.plain_result(reply)
 
-        if random.random() < 0.2:
+        poke_back_chance = 1.0 if count >= 3 else 0.2
+        if random.random() < poke_back_chance:
             bot = getattr(event, "bot", None)
             group_id = getattr(event.session, "session_id", None)
             if bot and group_id:
