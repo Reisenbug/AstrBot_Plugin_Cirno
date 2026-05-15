@@ -292,6 +292,13 @@ class Main(Star):
                 return
             logger.info(f"[HeartFlow] 兴趣度={interest:.2f}，继续插嘴")
 
+            gate_decision = await self._timing_gate(user_msg_text, sender_nickname)
+            if not gate_decision:
+                logger.info(f"[TimingGate] 决定不插嘴: {user_msg_text[:40]}")
+                req.system_prompt = ""
+                return
+            logger.info(f"[TimingGate] 决定插嘴")
+
         if is_random_reply:
             req.system_prompt += (
                 "\n你不是被叫到的，是自己凑过来插嘴的。"
@@ -708,6 +715,43 @@ class Main(Star):
             await self.put_kv_data("global_notes", self._global_notes)
 
         logger.info(f"[琪露诺记住] {user_name}({user_id}): {event_text}")
+
+    async def _timing_gate(self, message: str, sender_name: str) -> bool:
+        """Decide whether to interject in a random-reply scenario via a lightweight LLM call.
+        Returns True = engage, False = stay silent. Falls back to True on any error."""
+        if not message or len(message.strip()) < 3:
+            return False
+
+        try:
+            provider_id = self.context.get_all_providers()[0].meta().id
+        except Exception:
+            return True
+
+        state_label = self.state_manager.get_prompt_injection()[:30]
+        prompt = (
+            f"群里有人说：「{message[:80]}」\n"
+            f"你现在的状态：{state_label}\n"
+            "你（琪露诺）要不要主动插嘴？\n"
+            "判断标准：话题有趣、你有话说、或者对方说了什么让你忍不住——就回。"
+            "纯闲聊、复读、你完全不感兴趣的话题——就不回。\n"
+            "只输出 yes 或 no。"
+        )
+
+        try:
+            resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt,
+                system_prompt="你是琪露诺，只输出 yes 或 no。",
+            )
+        except Exception as e:
+            logger.debug(f"[TimingGate] LLM 调用失败，默认插嘴: {e}")
+            return True
+
+        if not resp or not resp.completion_text:
+            return True
+
+        answer = resp.completion_text.strip().lower()
+        return not answer.startswith("no")
 
     _WRITEBACK_SKIP_PATTERNS = ("哈哈", "哦", "好的", "嗯", "啊", "是的", "对啊", "好啊", "没事", "随便", "不知道")
 
