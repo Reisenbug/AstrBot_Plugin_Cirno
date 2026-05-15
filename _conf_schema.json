@@ -126,6 +126,12 @@
         "type": "string",
         "default": "",
         "hint": "指定 Embedding Provider ID，留空则自动取第一个可用的"
+      },
+      "fact_writeback_cooldown": {
+        "description": "事实回写冷却时间（秒）",
+        "type": "int",
+        "default": 120,
+        "hint": "同一用户两次事实回写之间的最短间隔，0 表示禁用冷却"
       }
     }
   },

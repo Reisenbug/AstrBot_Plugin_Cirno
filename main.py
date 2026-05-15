@@ -102,6 +102,8 @@ class Main(Star):
         self._global_notes: list[str] = []
         self._recent_bot_replies: list[str] = []
         self.jargon_filter = JargonStatisticalFilter()
+        self._fact_writeback_cooldown: int = memory_cfg.get("fact_writeback_cooldown", 120)
+        self._fact_writeback_last: dict[str, float] = {}
 
     async def initialize(self):
         import jieba
@@ -453,9 +455,13 @@ class Main(Star):
             ))
 
         if self._enable_core_memory and len(user_msg) > 15:
-            asyncio.create_task(self._writeback_user_facts(
-                sender_id, sender_name, user_msg, bot_reply
-            ))
+            cooldown = self._fact_writeback_cooldown
+            last = self._fact_writeback_last.get(sender_id, 0)
+            if cooldown <= 0 or time.time() - last >= cooldown:
+                self._fact_writeback_last[sender_id] = time.time()
+                asyncio.create_task(self._writeback_user_facts(
+                    sender_id, sender_name, user_msg, bot_reply
+                ))
 
         if self._enable_core_memory:
             is_known = self.core_memory.get_profile(sender_id) is not None
