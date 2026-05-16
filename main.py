@@ -310,10 +310,18 @@ class Main(Star):
                 "或者被某个具体的细节吸引，只追问那一个点。"
             )
         elif is_private:
-            req.system_prompt += (
-                "\n你们在私聊。对方专门找你说话，或者你找对方说话，不需要抢话，也不需要假装不懂。"
-                "可以更直接、更认真地回应，记得你们之前聊过的事，自然地延续关系。"
+            level = self.affinity.get_level(sender_id) if self._enable_affinity else "普通"
+            is_close = level in ("喜欢", "很喜欢")
+            private_prompt = (
+                "\n你们在私聊，没有旁观者。"
+                "你不需要表演给别人看，说话可以比群里更真实——少一点跳脱和夸张，多一点真心话。"
+                "对方特意打开聊天窗口找你，这本身就说明他想和你说话，不只是需要你回答问题。"
+                "你会在意「他为什么找我」，即使不说出口。"
+                "话题有连续性，认真接住对方说的每一句，不要随意跳题。"
             )
+            if is_close:
+                private_prompt += "好感度高的人私聊你，你不需要撑面子，可以不嘴硬，说话更松弛，偶尔流露真实感受。"
+            req.system_prompt += private_prompt
 
         if self._enable_core_memory:
             req.system_prompt += self.core_memory.build_sender_prompt(
