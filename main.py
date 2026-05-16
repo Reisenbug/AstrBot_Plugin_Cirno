@@ -76,6 +76,7 @@ class Main(Star):
             boredom_window=affinity_cfg.get("boredom_window", 300),
             boredom_threshold=affinity_cfg.get("boredom_threshold", 12),
         )
+        self._prank_duration_turns = affinity_cfg.get("prank_duration_turns", 5)
 
         meme_cfg = config.get("meme_settings", {})
         self._enable_meme = meme_cfg.get("enable", True)
@@ -562,11 +563,20 @@ class Main(Star):
             if self._prank_state.get("ending"):
                 self._prank_state = None
                 logger.info("[琪露诺恶作剧] 收尾完成，恶作剧结束")
-            elif time.time() >= self._prank_state["expires_at"]:
-                self._prank_state["ending"] = True
-                logger.info("[琪露诺恶作剧] 恶作剧时间到，进入收尾")
             else:
-                if valence_shift is not None and valence_shift < 0.4:
+                # 轮数制
+                if self._prank_state.get("turns_left") is not None:
+                    self._prank_state["turns_left"] -= 1
+                    logger.info(f"[琪露诺恶作剧] 剩余轮数={self._prank_state['turns_left']}")
+                    if self._prank_state["turns_left"] <= 0:
+                        self._prank_state["ending"] = True
+                        logger.info("[琪露诺恶作剧] 轮数耗尽，进入收尾")
+                # 时间制
+                elif self._prank_state.get("expires_at") and time.time() >= self._prank_state["expires_at"]:
+                    self._prank_state["ending"] = True
+                    logger.info("[琪露诺恶作剧] 恶作剧时间到，进入收尾")
+
+                if not self._prank_state.get("ending") and valence_shift is not None and valence_shift < 0.4:
                     self._prank_state["escalation"] = self._prank_state.get("escalation", 0) + 1
                     logger.info(f"[琪露诺恶作剧] 对方反应激烈，升级={self._prank_state['escalation']}")
         elif self._critique_state is None and self._enable_affinity and event.session.message_type == MessageType.GROUP_MESSAGE:
@@ -604,15 +614,26 @@ class Main(Star):
     ]
 
     def _start_prank(self, triggered_by: str) -> dict:
-        duration = random.randint(10, 20) * 60
         used = random.sample(range(len(self.PRANK_BEHAVIORS)), min(4, len(self.PRANK_BEHAVIORS)))
-        self._prank_state = {
-            "expires_at": time.time() + duration,
-            "triggered_by": triggered_by,
-            "behavior_pool": used,
-            "escalation": 0,
-            "ending": False,
-        }
+        if self._prank_duration_turns > 0:
+            self._prank_state = {
+                "turns_left": self._prank_duration_turns,
+                "expires_at": None,
+                "triggered_by": triggered_by,
+                "behavior_pool": used,
+                "escalation": 0,
+                "ending": False,
+            }
+        else:
+            duration = random.randint(10, 20) * 60
+            self._prank_state = {
+                "turns_left": None,
+                "expires_at": time.time() + duration,
+                "triggered_by": triggered_by,
+                "behavior_pool": used,
+                "escalation": 0,
+                "ending": False,
+            }
         return self._prank_state
 
     def _build_prank_prompt(self, sender_id: str, sender_name: str) -> str:
@@ -628,12 +649,17 @@ class Main(Star):
         escalation_hint = ""
         if escalation >= 2:
             escalation_hint = "对方已经有反应了，你越搞越起劲，变本加厉。"
-        remaining = max(0, int(self._prank_state["expires_at"] - time.time())) // 60
+        turns_left = self._prank_state.get("turns_left")
+        if turns_left is not None:
+            remaining_hint = f"（剩余约 {turns_left} 轮）"
+        else:
+            remaining = max(0, int(self._prank_state["expires_at"] - time.time())) // 60
+            remaining_hint = f"（剩余约 {remaining} 分钟）"
         return (
             f"\n【恶作剧模式】你现在心情特别好，想搞点事情。这条回复请：{behavior}。"
             f"{escalation_hint}全程保持琪露诺的口气——傲慢、得意、自以为是，不要变成别的风格。"
             "保持自然，像是你真的这么想，不要解释自己在搞恶作剧。"
-            f"（剩余约 {remaining} 分钟）"
+            f"{remaining_hint}"
         )
 
     def _build_critique_prompt(self) -> str:
@@ -1385,8 +1411,12 @@ class Main(Star):
                     f"有趣={u['fun']:.2f} 重要={u['importance']:.2f}]"
                 )
         if self._prank_state:
-            remaining = max(0, int(self._prank_state["expires_at"] - time.time())) // 60
-            lines.append(f"恶作剧模式: 激活，剩余约 {remaining} 分钟")
+            turns_left = self._prank_state.get("turns_left")
+            if turns_left is not None:
+                lines.append(f"恶作剧模式: 激活，剩余约 {turns_left} 轮")
+            else:
+                remaining = max(0, int(self._prank_state["expires_at"] - time.time())) // 60
+                lines.append(f"恶作剧模式: 激活，剩余约 {remaining} 分钟")
         else:
             lines.append("恶作剧模式: 未激活")
         session_id = event.unified_msg_origin

@@ -190,6 +190,12 @@
         "type": "int",
         "default": 12,
         "hint": "窗口内超过多少次对话开始觉得腻，超过两倍则明显敷衍"
+      },
+      "prank_duration_turns": {
+        "description": "恶作剧持续轮数",
+        "type": "int",
+        "default": 5,
+        "hint": "恶作剧模式持续多少轮对话后进入收尾，0 表示使用旧的时间制（10~20分钟）"
       }
     }
   },
