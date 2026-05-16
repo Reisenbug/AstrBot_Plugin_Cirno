@@ -135,6 +135,29 @@
       }
     }
   },
+  "private_chat_settings": {
+    "description": "主动私聊设置",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用主动私聊",
+        "type": "bool",
+        "default": false
+      },
+      "targets": {
+        "description": "目标用户列表",
+        "type": "text",
+        "default": "",
+        "hint": "每行一个，格式：平台session:QQ号，例如 chatbot1(aiocqhttp):FriendMessage:123456789。可在「琪露诺状态」命令中查看当前平台ID。"
+      },
+      "min_idle_hours": {
+        "description": "最短空闲时间（小时）",
+        "type": "int",
+        "default": 24,
+        "hint": "与目标用户多少小时没有互动后才考虑主动私聊"
+      }
+    }
+  },
   "debug_settings": {
     "description": "调试设置",
     "type": "object",

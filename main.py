@@ -108,6 +108,22 @@ class Main(Star):
         self.heart_flow = HeartFlow()
         self._poke_streaks: dict[str, dict] = {}
 
+        private_cfg = config.get("private_chat_settings", {})
+        self._enable_private_proactive = private_cfg.get("enable", False)
+        self._private_targets: list[dict] = []
+        if self._enable_private_proactive:
+            for line in private_cfg.get("targets", "").strip().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.rsplit(":", 1)
+                if len(parts) == 2:
+                    self._private_targets.append({
+                        "session": parts[0].strip(),
+                        "user_id": parts[1].strip(),
+                    })
+        self._private_min_idle = private_cfg.get("min_idle_hours", 24) * 3600
+
     async def initialize(self):
         import jieba
         await asyncio.get_event_loop().run_in_executor(None, jieba.lcut, "预热")
@@ -1019,16 +1035,109 @@ class Main(Star):
     async def _proactive_check(self):
         self.state_manager.maybe_transition()
         topic = self.state_manager.should_speak_proactively()
-        if not topic:
+        if topic:
+            await self.put_kv_data("state_data", self.state_manager.to_dict())
+            for session_str in list(self._group_sessions):
+                try:
+                    await self._send_proactive_to_group(session_str, topic)
+                except Exception as e:
+                    logger.error(f"主动发言发送失败 ({session_str}): {e}")
+
+        if self._enable_private_proactive and self._private_targets:
+            await self._proactive_private_check()
+
+    async def _proactive_private_check(self):
+        from .cirno_states import CIRNO_STATES
+        cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
+        if cat in ("rest",):
             return
 
-        await self.put_kv_data("state_data", self.state_manager.to_dict())
+        now = time.time()
+        for target in self._private_targets:
+            user_id = target["user_id"]
+            session = target["session"]
 
-        for session_str in list(self._group_sessions):
+            # 检查最近互动时间
+            records = self.user_msg_store.get_recent(user_id, limit=1)
+            last_ts = records[0].get("ts", 0) if records else 0
+            if now - last_ts < self._private_min_idle:
+                continue
+
+            # 好感度检查：至少普通才主动找
+            if self._enable_affinity:
+                composite = self.affinity.get_composite(user_id)
+                if composite < 46:
+                    continue
+
+            # 生成动机：从群聊最近话题或状态取
+            motivation = self._build_private_motivation(user_id)
             try:
-                await self._send_proactive_to_group(session_str, topic)
+                await self._send_proactive_to_private(session, user_id, motivation)
+                logger.info(f"[琪露诺私聊] 主动发送给 {user_id}: {motivation[:30]}")
             except Exception as e:
-                logger.error(f"主动发言发送失败 ({session_str}): {e}")
+                logger.error(f"[琪露诺私聊] 发送失败 ({session}): {e}")
+
+    def _build_private_motivation(self, user_id: str) -> str:
+        profile = self.core_memory.get_profile(user_id) if self._enable_core_memory else None
+        state = self.state_manager.current_state
+        from .cirno_states import CIRNO_STATES
+        state_topics = CIRNO_STATES.get(state, {}).get("proactive_topics", [])
+        topic = random.choice(state_topics) if state_topics else ""
+
+        if profile:
+            rel = profile.get("relationship", "")
+            events = profile.get("important_events", [])
+            event_hint = f"你记得和他之间发生过：{events[-1]}" if events else ""
+            return f"{rel}。{event_hint}。{topic}".strip("。")
+        return topic or "你突然想起这个人，想找他说说话"
+
+    async def _send_proactive_to_private(self, session_str: str, user_id: str, motivation: str):
+        try:
+            provider_id = await self.context.get_current_chat_provider_id(session_str)
+        except Exception:
+            providers = self.context.get_all_providers()
+            if not providers:
+                return
+            provider_id = providers[0].meta().id
+
+        persona = await self.context.persona_manager.get_default_persona_v3(umo=session_str)
+        base_system_prompt = persona.get("prompt", "") if persona else ""
+
+        sender_prompt = self.core_memory.build_sender_prompt(user_id, "") if self._enable_core_memory else ""
+        affinity_prompt = self.affinity.build_status_prompt(user_id) if self._enable_affinity else ""
+
+        system_prompt = "\n".join([
+            base_system_prompt,
+            self.state_manager.get_prompt_injection(),
+            sender_prompt,
+            affinity_prompt,
+            ABSOLUTE_RULES,
+            "\n你们在私聊，没有旁观者。你突然想找这个人说说话。"
+            "说一两句自然的开场，不要太刻意，像是真的想起他了。"
+            "不要说「你好」，不要解释自己为什么突然来找他。",
+        ])
+
+        fake_prompt = f"[系统：琪露诺现在想主动找这个人说话，动机是：{motivation}]"
+
+        try:
+            resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=fake_prompt,
+                system_prompt=system_prompt,
+            )
+        except Exception as e:
+            logger.error(f"[琪露诺私聊] LLM 调用失败: {e}")
+            return
+
+        if not resp or not resp.completion_text:
+            return
+
+        text = resp.completion_text
+        if self._enable_affinity:
+            text, _, _, _ = self.affinity.extract_inner(text)
+
+        msg = MessageChain().message(text)
+        await self.context.send_message(session_str, msg)
 
     async def _send_proactive_to_group(self, session_str: str, topic: str):
         try:
