@@ -301,12 +301,18 @@ class Main(Star):
                 return
             logger.info(f"[TimingGate] 决定插嘴")
 
+        is_private = event.session.message_type != MessageType.GROUP_MESSAGE
         if is_random_reply:
             req.system_prompt += (
                 "\n你不是被叫到的，是自己凑过来插嘴的。"
                 "如果话题你不了解，绝对不要承认不知道——从字面意思或听起来像什么去猜，"
                 "然后基于你的理解（通常是错的）自信地参与讨论。"
                 "或者被某个具体的细节吸引，只追问那一个点。"
+            )
+        elif is_private:
+            req.system_prompt += (
+                "\n你们在私聊。对方专门找你说话，或者你找对方说话，不需要抢话，也不需要假装不懂。"
+                "可以更直接、更认真地回应，记得你们之前聊过的事，自然地延续关系。"
             )
 
         if self._enable_core_memory:
@@ -355,13 +361,14 @@ class Main(Star):
                 f"\n模仿时：保留琪露诺的思维方式和情感，但把表达方式换成{tname}的风格。"
                 f"不要在回复中说「我在模仿{tname}」，直接用那个风格说话。"
             )
-        slang_matches = self.slang_store.match(event.message_str or "")
-        if slang_matches:
-            slang_lines = "\n".join(
-                f'「{e["word"]}」：{e["meaning"]}，可以自然地用在合适的场合。'
-                for e in slang_matches
-            )
-            req.system_prompt += f"\n【群里的说法】\n{slang_lines}"
+        if not is_private:
+            slang_matches = self.slang_store.match(event.message_str or "")
+            if slang_matches:
+                slang_lines = "\n".join(
+                    f'「{e["word"]}」：{e["meaning"]}，可以自然地用在合适的场合。'
+                    for e in slang_matches
+                )
+                req.system_prompt += f"\n【群里的说法】\n{slang_lines}"
         if self._global_notes:
             notes_text = "\n".join(f"- {n}" for n in self._global_notes)
             req.system_prompt += f"\n【你特意记下来的事】\n{notes_text}"
