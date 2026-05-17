@@ -108,6 +108,8 @@ class Main(Star):
         self._fact_writeback_last: dict[str, float] = {}
         self.heart_flow = HeartFlow()
         self._poke_streaks: dict[str, dict] = {}
+        self._private_last_user_msg: dict[str, float] = {}
+        self._private_followup_tasks: dict[str, asyncio.Task] = {}
 
         private_cfg = config.get("private_chat_settings", {})
         self._enable_private_proactive = private_cfg.get("enable", False)
@@ -255,6 +257,11 @@ class Main(Star):
         )
 
         user_msg_text = event.message_str or ""
+        if event.session.message_type != MessageType.GROUP_MESSAGE:
+            self._private_last_user_msg[sender_id] = time.time()
+            old_task = self._private_followup_tasks.pop(sender_id, None)
+            if old_task and not old_task.done():
+                old_task.cancel()
         if self._enable_core_memory:
             user_msg_text = self._replace_at_with_names(user_msg_text)
             people_prompt = self.core_memory.build_people_prompt(user_msg_text, sender_id)
@@ -488,6 +495,20 @@ class Main(Star):
         if len(self._recent_bot_replies) > 5:
             self._recent_bot_replies.pop(0)
         self.heart_flow.on_bot_reply(event.unified_msg_origin)
+
+        is_private_chat = event.session.message_type != MessageType.GROUP_MESSAGE
+        if is_private_chat and self._enable_private_proactive:
+            self._private_last_user_msg[sender_id] = time.time()
+            old_task = self._private_followup_tasks.pop(sender_id, None)
+            if old_task and not old_task.done():
+                old_task.cancel()
+            task = asyncio.create_task(
+                self._private_followup_flow(
+                    sender_id, sender_name, bot_reply,
+                    event.unified_msg_origin
+                )
+            )
+            self._private_followup_tasks[sender_id] = task
 
         if event.session.message_type == MessageType.GROUP_MESSAGE:
             platform_id = event.get_platform_id()
@@ -1071,6 +1092,98 @@ class Main(Star):
 
         if self._enable_private_proactive and self._private_targets:
             await self._proactive_private_check()
+
+    async def _private_followup_flow(
+        self, user_id: str, user_name: str, last_bot_reply: str, session_str: str
+    ):
+        try:
+            await asyncio.sleep(300)  # 5分钟
+
+            # 检查用户有没有回复
+            last_user_ts = self._private_last_user_msg.get(user_id, 0)
+            if time.time() - last_user_ts < 290:
+                return
+
+            # 10% 概率追问
+            if random.random() > 0.10:
+                return
+
+            followup = await self._generate_private_followup(
+                user_id, user_name, last_bot_reply, stage=1
+            )
+            if followup:
+                msg = MessageChain().message(followup)
+                await self.context.send_message(session_str, msg)
+                logger.info(f"[私聊跟进] 追问 {user_name}({user_id}): {followup[:30]}")
+
+            # 再等5分钟，看用户是否回复
+            await asyncio.sleep(300)
+            last_user_ts = self._private_last_user_msg.get(user_id, 0)
+            if time.time() - last_user_ts < 290:
+                return
+
+            # 用户不在线，自言自语
+            monologue = await self._generate_private_followup(
+                user_id, user_name, last_bot_reply, stage=2
+            )
+            if monologue:
+                msg = MessageChain().message(monologue)
+                await self.context.send_message(session_str, msg)
+                logger.info(f"[私聊跟进] 自言自语 {user_name}({user_id}): {monologue[:30]}")
+
+        except asyncio.CancelledError:
+            pass
+
+    async def _generate_private_followup(
+        self, user_id: str, user_name: str, last_bot_reply: str, stage: int
+    ) -> str:
+        try:
+            provider_id = self.context.get_all_providers()[0].meta().id
+        except Exception:
+            return ""
+
+        sender_prompt = self.core_memory.build_sender_prompt(user_id, user_name) if self._enable_core_memory else f"对方叫{user_name}"
+        affinity_prompt = self.affinity.build_status_prompt(user_id) if self._enable_affinity else ""
+        level = self.affinity.get_level(user_id) if self._enable_affinity else "普通"
+        is_close = level in ("喜欢", "很喜欢")
+
+        if stage == 1:
+            if is_close:
+                tone = "你有点在意对方没有回应，用随意的口气追一句，像是顺口问问，不要显得很在乎"
+            else:
+                tone = "对方没有回应，你随口追一句，语气平淡"
+            prompt = (
+                f"你刚才说了：「{last_bot_reply[:60]}」\n"
+                f"{sender_prompt}{affinity_prompt}\n"
+                f"对方沉默了一会儿，{tone}。\n"
+                "只说一句话，10字以内，自然随意。直接输出那句话。"
+            )
+        else:
+            if is_close:
+                tone = "你觉得对方大概不在了，心里有点失落，自顾自说一句，或者吐露一点真实感受"
+            else:
+                tone = "你觉得对方不在线了，随便自言自语一句"
+            prompt = (
+                f"{sender_prompt}{affinity_prompt}\n"
+                f"对方一直没有回应，你判断他应该不在了。{tone}。\n"
+                "只说一句话，15字以内，不要问句。直接输出那句话。"
+            )
+
+        try:
+            resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt,
+                system_prompt="你是琪露诺，只输出一句简短的话。",
+            )
+        except Exception:
+            return ""
+
+        if not resp or not resp.completion_text:
+            return ""
+        text = resp.completion_text.strip()
+        if self._enable_affinity:
+            text, _, _, _ = self.affinity.extract_inner(text)
+        return text
 
     async def _proactive_private_check(self):
         from .cirno_states import CIRNO_STATES
@@ -1697,4 +1810,8 @@ class Main(Star):
                 await self.context.cron_manager.delete_job(self._daily_profile_cron_id)
             except Exception:
                 pass
+        for task in self._private_followup_tasks.values():
+            if not task.done():
+                task.cancel()
+        self._private_followup_tasks.clear()
         logger.info("琪露诺状态系统已保存并清理")
