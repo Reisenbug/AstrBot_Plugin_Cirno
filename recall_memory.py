@@ -305,6 +305,22 @@ class RecallMemory:
         group_factor = 1.0 if (not entry_gid or not current_group_id or entry_gid == current_group_id) else 0.3
         return (bm25 * 0.7 + time_decay * 0.1 + user_bonus) * group_factor
 
+    _DIVERSITY_PENALTY = [1.0, 0.5, 0.25]  # 同一用户第1/2/3+条的得分系数
+
+    def _apply_diversity(self, scored: list[tuple[float, dict]]) -> list[tuple[float, dict]]:
+        """对已排序的结果按用户降权，避免单一用户垄断结果。"""
+        user_counts: dict[str, int] = {}
+        result = []
+        for score, entry in scored:
+            users = entry.get("users", [])
+            key = ",".join(sorted(users)) if users else ""
+            n = user_counts.get(key, 0)
+            penalty = self._DIVERSITY_PENALTY[n] if n < len(self._DIVERSITY_PENALTY) else self._DIVERSITY_PENALTY[-1]
+            user_counts[key] = n + 1
+            result.append((score * penalty, entry))
+        result.sort(key=lambda x: x[0], reverse=True)
+        return result
+
     def search(self, query: str, current_user_id: str | None = None, top_k: int | None = None, current_group_id: str | None = None) -> list[dict]:
         if top_k is None:
             top_k = self._top_k
@@ -323,6 +339,7 @@ class RecallMemory:
                 scored.append((score, entry))
 
         scored.sort(key=lambda x: x[0], reverse=True)
+        scored = self._apply_diversity(scored)
         return [entry for _, entry in scored[:top_k]]
 
     async def search_async(
@@ -348,6 +365,7 @@ class RecallMemory:
         bm25_scored.sort(key=lambda x: x[0], reverse=True)
 
         if not self._embed_provider:
+            bm25_scored = self._apply_diversity(bm25_scored)
             return [e for _, e in bm25_scored[:top_k]]
 
         # Semantic path
@@ -389,7 +407,9 @@ class RecallMemory:
             id_to_entry[eid] = entry
 
         fused = sorted(rrf.items(), key=lambda x: x[1], reverse=True)
-        return [id_to_entry[eid] for eid, _ in fused[:top_k]]
+        fused_scored = [(score, id_to_entry[eid]) for eid, score in fused]
+        fused_scored = self._apply_diversity(fused_scored)
+        return [entry for _, entry in fused_scored[:top_k]]
 
     def get_recent_by_user(self, user_id: str, limit: int = 15) -> list[dict]:
         user_id = str(user_id)
