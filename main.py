@@ -284,26 +284,6 @@ class Main(Star):
         req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
         suppress_recall = current_category == "rest"
 
-        has_recall = False
-        recall_prompt = ""
-        if self._enable_recall_memory and not suppress_recall:
-            user_msg = event.message_str or ""
-            if user_msg:
-                memories = await self.recall_memory.search_async(
-                    user_msg, current_user_id=sender_id,
-                    current_group_id=event.get_group_id() or None
-                )
-                if memories:
-                    has_recall = True
-                    logger.info(
-                        f"[琪露诺回忆检索] 命中 {len(memories)} 条: "
-                        + ", ".join(
-                            f"「{m.get('text', '')[:30]}」"
-                            for m in memories
-                        )
-                    )
-                recall_prompt = self.recall_memory.build_recall_prompt(memories)
-
         is_random_reply = (
             not event.is_at_or_wake_command
             and event.session.message_type == MessageType.GROUP_MESSAGE
@@ -324,6 +304,26 @@ class Main(Star):
                 event.stop_event()
                 return
             logger.info(f"[TimingGate] 决定插嘴")
+
+        has_recall = False
+        recall_prompt = ""
+        if self._enable_recall_memory and not suppress_recall:
+            user_msg = event.message_str or ""
+            if user_msg:
+                memories = await self.recall_memory.search_async(
+                    user_msg, current_user_id=sender_id,
+                    current_group_id=event.get_group_id() or None
+                )
+                if memories:
+                    has_recall = True
+                    logger.info(
+                        f"[琪露诺回忆检索] 命中 {len(memories)} 条: "
+                        + ", ".join(
+                            f"「{m.get('text', '')[:30]}」"
+                            for m in memories
+                        )
+                    )
+                recall_prompt = self.recall_memory.build_recall_prompt(memories)
 
         is_private = event.session.message_type != MessageType.GROUP_MESSAGE
         if is_random_reply:
