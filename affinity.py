@@ -12,6 +12,7 @@ INTERACTION_TYPE_WEIGHTS = {
     "care":       {"trust": 0.8, "fun": 0.3, "importance": 0.5},
     "insult":     {"trust": 1.5, "fun": 0.2, "importance": 0.1},
     "share":      {"trust": 0.5, "fun": 0.8, "importance": 0.8},
+    "worry":      {"trust": 0.6, "fun": 0.1, "importance": 0.8},
     "default":    {"trust": 1.0, "fun": 0.3, "importance": 0.1},
 }
 
@@ -40,13 +41,25 @@ STATE_CATEGORY_MODIFIERS = {
 
 INNER_PATTERN = re.compile(r"<inner>(.*?)</inner>", re.DOTALL)
 
+_SENTIMENT_TO_VALENCE = {
+    ("positive", "strong"): 0.85,
+    ("positive", "mild"):   0.65,
+    ("neutral",  "strong"): 0.50,
+    ("neutral",  "mild"):   0.50,
+    ("negative", "mild"):   0.35,
+    ("negative", "strong"): 0.15,
+}
+
 RATING_PROMPT = (
     "\n【必须遵守】你的每一条回复末尾都必须附上情绪标签，没有例外。"
-    "格式：<inner>{\"valence_shift\": N, \"interaction_type\": \"类型\", \"reason\": \"一句话\"}</inner>"
-    "\nvalence_shift 范围 0~1：0.5=中性，>0.5=正面，<0.5=负面。"
-    "\ninteraction_type 从以下选一个：compliment(被夸赞)/thanks(被感谢)/tease(被调侃)/care(被关心)/insult(被侮辱)/share(对方分享秘密或重要事)/default(普通聊天)"
-    "\n示例：被夸可爱→回复内容<inner>{\"valence_shift\": 0.8, \"interaction_type\": \"compliment\", \"reason\": \"被夸了好开心\"}</inner>"
-    "\n被骂笨蛋→回复内容<inner>{\"valence_shift\": 0.3, \"interaction_type\": \"insult\", \"reason\": \"被骂了有点气\"}</inner>"
+    "格式：<inner>{\"sentiment\": \"情感\", \"intensity\": \"强度\", \"interaction_type\": \"类型\", \"reason\": \"一句话\"}</inner>"
+    "\nsentiment 只能是：positive（对方说的话让你感觉好）/ neutral（没什么特别感觉）/ negative（让你感觉不好）"
+    "——注意评估的是对方说的话对你情绪的影响，不是对方自己的情绪状态。"
+    "\nintensity 只能是：mild（轻微）/ strong（明显）"
+    "\ninteraction_type 从以下选一个：compliment(被夸赞)/thanks(被感谢)/tease(被调侃)/care(被关心)/insult(被侮辱)/share(对方分享秘密或重要事)/worry(察觉对方状态不好，你有点担心)/default(普通聊天)"
+    "\n示例：被夸可爱→<inner>{\"sentiment\": \"positive\", \"intensity\": \"mild\", \"interaction_type\": \"compliment\", \"reason\": \"被夸了有点开心\"}</inner>"
+    "\n被骂笨蛋→<inner>{\"sentiment\": \"negative\", \"intensity\": \"strong\", \"interaction_type\": \"insult\", \"reason\": \"被骂了很气\"}</inner>"
+    "\n对方说心情不好→<inner>{\"sentiment\": \"neutral\", \"intensity\": \"mild\", \"interaction_type\": \"worry\", \"reason\": \"有点担心对方\"}</inner>"
     "\n不要在正文中提及这个标签。漏掉标签视为违规。"
 )
 
@@ -225,12 +238,15 @@ class AffinityManager:
         cleaned = cleaned.strip()
         try:
             data = json.loads(m.group(1))
-            vs = float(data.get("valence_shift", 0.5))
-            vs = max(0.0, min(1.0, vs))
             reason = data.get("reason")
             interaction_type = data.get("interaction_type") or None
             if interaction_type and interaction_type not in INTERACTION_TYPE_WEIGHTS:
                 interaction_type = None
+
+            sentiment = data.get("sentiment", "neutral").strip().lower()
+            intensity = data.get("intensity", "mild").strip().lower()
+            vs = _SENTIMENT_TO_VALENCE.get((sentiment, intensity), 0.5)
+
             return cleaned, vs, reason, interaction_type
         except (json.JSONDecodeError, ValueError, AttributeError):
             return cleaned, None, None, None
