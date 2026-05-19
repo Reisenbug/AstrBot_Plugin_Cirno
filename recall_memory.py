@@ -308,18 +308,28 @@ class RecallMemory:
     _DIVERSITY_PENALTY = [1.0, 0.5, 0.25]  # 同一用户第1/2/3+条的得分系数
 
     def _apply_diversity(self, scored: list[tuple[float, dict]]) -> list[tuple[float, dict]]:
-        """对已排序的结果按用户降权，避免单一用户垄断结果。"""
+        """对已排序的结果按用户降权，避免单一用户垄断结果。per-user 计数。"""
         user_counts: dict[str, int] = {}
         result = []
         for score, entry in scored:
             users = entry.get("users", [])
-            key = ",".join(sorted(users)) if users else ""
-            n = user_counts.get(key, 0)
-            penalty = self._DIVERSITY_PENALTY[n] if n < len(self._DIVERSITY_PENALTY) else self._DIVERSITY_PENALTY[-1]
-            user_counts[key] = n + 1
+            max_count = max((user_counts.get(u, 0) for u in users), default=0)
+            penalty = self._DIVERSITY_PENALTY[max_count] if max_count < len(self._DIVERSITY_PENALTY) else self._DIVERSITY_PENALTY[-1]
+            for u in users:
+                user_counts[u] = user_counts.get(u, 0) + 1
             result.append((score * penalty, entry))
         result.sort(key=lambda x: x[0], reverse=True)
         return result
+
+    def _user_first_merge(
+        self, scored: list[tuple[float, dict]], current_user_id: str, top_k: int
+    ) -> list[dict]:
+        """优先返回含当前用户的摘要，不足 top_k 时补其他摘要。"""
+        user_entries = [(s, e) for s, e in scored if current_user_id in e.get("users", [])]
+        other_entries = [(s, e) for s, e in scored if current_user_id not in e.get("users", [])]
+        merged = user_entries[:top_k] + other_entries[:max(0, top_k - len(user_entries[:top_k]))]
+        merged.sort(key=lambda x: x[0], reverse=True)
+        return [e for _, e in merged[:top_k]]
 
     def search(self, query: str, current_user_id: str | None = None, top_k: int | None = None, current_group_id: str | None = None) -> list[dict]:
         if top_k is None:
@@ -340,6 +350,8 @@ class RecallMemory:
 
         scored.sort(key=lambda x: x[0], reverse=True)
         scored = self._apply_diversity(scored)
+        if current_user_id:
+            return self._user_first_merge(scored, current_user_id, top_k)
         return [entry for _, entry in scored[:top_k]]
 
     async def search_async(
@@ -366,6 +378,8 @@ class RecallMemory:
 
         if not self._embed_provider:
             bm25_scored = self._apply_diversity(bm25_scored)
+            if current_user_id:
+                return self._user_first_merge(bm25_scored, current_user_id, top_k)
             return [e for _, e in bm25_scored[:top_k]]
 
         # Semantic path
@@ -409,6 +423,8 @@ class RecallMemory:
         fused = sorted(rrf.items(), key=lambda x: x[1], reverse=True)
         fused_scored = [(score, id_to_entry[eid]) for eid, score in fused]
         fused_scored = self._apply_diversity(fused_scored)
+        if current_user_id:
+            return self._user_first_merge(fused_scored, current_user_id, top_k)
         return [entry for _, entry in fused_scored[:top_k]]
 
     def get_recent_by_user(self, user_id: str, limit: int = 15) -> list[dict]:
