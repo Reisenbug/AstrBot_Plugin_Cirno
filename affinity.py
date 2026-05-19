@@ -277,6 +277,12 @@ class AffinityManager:
         e["arousal"] = max(0.0, min(1.0, e["arousal"]))
         e["vulnerability"] = max(0.0, min(1.0, e["vulnerability"]))
 
+    _DRIFT_TARGETS = {"trust": 0.5, "fun": 0.5}
+    _DRIFT_RATE = 0.002        # 每次互动向中性漂移的速率
+    _STREAK_THRESHOLD = 5      # 连续正面互动触发加速的次数
+    _STREAK_BOOST = 2.0        # 加速倍率
+    _BIG_MOMENT_TYPES = {"care", "share", "worry"}  # 触发重要事件快速修复的类型
+
     def update_affinity(self, user_id: str, valence_shift: float, interaction_type: str | None = None):
         ud = self._user_data.get(user_id)
         if not ud:
@@ -286,24 +292,41 @@ class AffinityManager:
         weights = INTERACTION_TYPE_WEIGHTS.get(interaction_type or "default", INTERACTION_TYPE_WEIGHTS["default"])
         intensity = abs(valence_shift - 0.5) * 2
 
+        # 机制1：时间自然漂移向中性
+        idle_hours = (time.time() - ud.get("last_ts", time.time())) / 3600
+        if idle_hours > 1:
+            drift = min(self._DRIFT_RATE * idle_hours, 0.05)
+            for dim, target in self._DRIFT_TARGETS.items():
+                current = ud.get(dim, target)
+                ud[dim] = current + (target - current) * drift
+
         ud["familiarity"] = min(1.0, ud["familiarity"] + 0.005)
 
+        # 机制2：连续正面互动加速
+        history = self._valence_history.get(user_id, [])
+        recent_positive = sum(1 for v in history[-self._STREAK_THRESHOLD:] if v > 0.55)
+        streak_boost = self._STREAK_BOOST if (valence_shift > 0.55 and recent_positive >= self._STREAK_THRESHOLD - 1) else 1.0
+
         if valence_shift > 0.55:
-            ud["trust"] = min(1.0, ud["trust"] + intensity * 0.05 * weights["trust"])
+            ud["trust"] = min(1.0, ud["trust"] + intensity * 0.05 * weights["trust"] * streak_boost)
         elif valence_shift < 0.45:
             ud["trust"] = max(0.0, ud["trust"] - intensity * 0.08 * weights["trust"])
 
         if self._emotion["arousal"] > 0.6 or interaction_type in ("tease", "share"):
-            ud["fun"] = min(1.0, ud["fun"] + intensity * 0.03 * weights["fun"])
+            ud["fun"] = min(1.0, ud["fun"] + intensity * 0.03 * weights["fun"] * streak_boost)
         else:
             ud["fun"] = ud["fun"] * 0.998 + 0.5 * 0.002
 
         if valence_shift > 0.55:
             ud["importance"] = min(1.0, ud["importance"] + intensity * 0.02 * weights["importance"])
 
+        # 机制3：重要正面事件直接拉分
+        if interaction_type in self._BIG_MOMENT_TYPES and valence_shift > 0.6 and intensity > 0.3:
+            ud["trust"] = min(1.0, ud["trust"] + 0.05)
+            ud["importance"] = min(1.0, ud["importance"] + 0.03)
+
         ud["last_ts"] = time.time()
 
-        history = self._valence_history.get(user_id, [])
         history.append(valence_shift)
         self._valence_history[user_id] = history[-self._WARMTH_WINDOW:]
 
