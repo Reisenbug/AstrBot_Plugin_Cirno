@@ -752,13 +752,11 @@ class Main(Star):
         )
 
         if result.get("memory") and self._enable_core_memory:
-            profile = self.core_memory.get_profile(user_id)
-            if profile:
-                events = profile.get("important_events", [])
-                events.append(result["memory"][:50])
-                profile["important_events"] = events[-3:]
-                await self.core_memory.save()
-                logger.info(f"[琪露诺关键事件] 写入核心记忆: {result['memory']}")
+            is_neg = result.get("delta", 0) < 0
+            await self.core_memory.add_important_event(
+                user_id, result["memory"], nickname=nickname, is_negative=is_neg
+            )
+            logger.info(f"[琪露诺关键事件] 写入核心记忆({'负面' if is_neg else '正面'}): {result['memory']}")
 
         await self.affinity.save()
 

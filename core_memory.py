@@ -128,7 +128,8 @@ class CoreMemory:
             elif original:
                 parts.append(original)
             if events:
-                parts.append("你记得和他之间发生过这些事：" + "；".join(events))
+                clean_events = [e[5:] if e.startswith("[neg]") else e for e in events]
+                parts.append("你记得和他之间发生过这些事：" + "；".join(clean_events))
             return "".join(parts)
         else:
             return f"\n当前和你对话的人是「{sender_nickname}」，你不认识这个人。"
@@ -242,7 +243,11 @@ class CoreMemory:
 
         await self.update_profile_via_llm(user_id, summary, context, nickname=nickname)
 
-    async def add_important_event(self, user_id: str, event_text: str, nickname: str = ""):
+    @staticmethod
+    def _is_negative_event(event_text: str) -> bool:
+        return event_text.startswith("[neg]")
+
+    async def add_important_event(self, user_id: str, event_text: str, nickname: str = "", is_negative: bool = False):
         user_id = str(user_id)
         profile = self._profiles.get(user_id)
         if not profile:
@@ -257,11 +262,16 @@ class CoreMemory:
             self._profiles[user_id] = profile
 
         events: list = profile.setdefault("important_events", [])
-        event_text = event_text[:50]
-        if event_text not in events:
-            events.append(event_text)
-            if len(events) > 3:
-                events.pop(0)
+        tagged = f"[neg]{event_text[:47]}" if is_negative else event_text[:50]
+        if tagged not in events:
+            if len(events) >= 3:
+                # 优先替换最旧的负面事件，没有负面事件才替换最旧的
+                neg_indices = [i for i, e in enumerate(events) if self._is_negative_event(e)]
+                if neg_indices:
+                    events.pop(neg_indices[0])
+                else:
+                    events.pop(0)
+            events.append(tagged)
             profile["updated_at"] = time.time()
             await self.save()
-            logger.info(f"核心记忆：直接写入事件 [{profile.get('name', user_id)}] {event_text}")
+            logger.info(f"核心记忆：直接写入事件 [{profile.get('name', user_id)}] {tagged}")
