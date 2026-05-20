@@ -656,11 +656,12 @@ class Main(Star):
         chance = mood_factor * affinity_factor * 0.12
         if random.random() < chance:
             state = self._start_prank(sender_id)
-            duration = int(state["expires_at"] - time.time()) // 60
+            turns_left = state.get("turns_left")
+            duration_info = f"{turns_left}轮" if turns_left is not None else f"{int(state['expires_at'] - time.time()) // 60}min"
             logger.info(
                 f"[琪露诺恶作剧] 进入恶作剧模式! "
                 f"valence={valence:.2f} composite={composite:.0f} "
-                f"chance={chance:.2%} duration={duration}min "
+                f"chance={chance:.2%} duration={duration_info} "
                 f"pool={state['behavior_pool']}"
             )
 
