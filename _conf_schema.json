@@ -135,6 +135,30 @@
       }
     }
   },
+  "profile_settings": {
+    "description": "个人资料同步设置",
+    "type": "object",
+    "items": {
+      "enable_nickname_sync": {
+        "description": "状态切换时同步QQ昵称",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后状态切换时自动修改bot的QQ昵称"
+      },
+      "enable_signature_sync": {
+        "description": "状态切换时同步QQ签名",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后状态切换时自动修改bot的个性签名为当前状态描述"
+      },
+      "nickname_prefix": {
+        "description": "昵称前缀",
+        "type": "string",
+        "default": "最强的琪露诺！",
+        "hint": "固定昵称，不随状态变化。留空则使用状态对应的昵称"
+      }
+    }
+  },
   "private_chat_settings": {
     "description": "主动私聊设置",
     "type": "object",

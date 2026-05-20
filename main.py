@@ -107,6 +107,10 @@ class Main(Star):
         self._fact_writeback_cooldown: int = memory_cfg.get("fact_writeback_cooldown", 120)
         self._fact_writeback_last: dict[str, float] = {}
         self.heart_flow = HeartFlow()
+        profile_cfg = config.get("profile_settings", {})
+        self._enable_nickname_sync = profile_cfg.get("enable_nickname_sync", False)
+        self._enable_signature_sync = profile_cfg.get("enable_signature_sync", False)
+        self._nickname_prefix = profile_cfg.get("nickname_prefix", "最强的琪露诺！")
         self._poke_streaks: dict[str, dict] = {}
         self._private_last_user_msg: dict[str, float] = {}
         self._private_followup_tasks: dict[str, asyncio.Task] = {}
@@ -224,13 +228,31 @@ class Main(Star):
 
     async def _sync_qq_status(self, bot):
         from .cirno_states import CIRNO_STATES
-        cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
+        state = CIRNO_STATES.get(self.state_manager.current_state, {})
+        cat = state.get("category", "")
+        label = state.get("label", "")
+
         status, ext_status = self._CATEGORY_QQ_STATUS.get(cat, (10, 0))
         try:
             await bot.call_action("set_online_status", status=status, ext_status=ext_status, battery_status=0)
             logger.info(f"[琪露诺状态] QQ在线状态已同步: category={cat} status={status} ext={ext_status}")
         except Exception as e:
             logger.debug(f"[琪露诺状态] QQ在线状态同步失败: {e}")
+
+        if self._enable_nickname_sync or self._enable_signature_sync:
+            nickname = self._nickname_prefix if self._nickname_prefix else f"琪露诺（{label}）"
+            signature = label if self._enable_signature_sync else None
+            try:
+                kwargs = {}
+                if self._enable_nickname_sync:
+                    kwargs["nickname"] = nickname
+                if self._enable_signature_sync:
+                    kwargs["personal_note"] = signature
+                if kwargs:
+                    await bot.call_action("set_qq_profile", **kwargs)
+                    logger.info(f"[琪露诺状态] QQ资料已同步: {kwargs}")
+            except Exception as e:
+                logger.debug(f"[琪露诺状态] QQ资料同步失败: {e}")
 
     def _replace_at_with_names(self, text: str) -> str:
         def _repl(m):
