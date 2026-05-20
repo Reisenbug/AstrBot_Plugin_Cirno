@@ -374,86 +374,69 @@ class AffinityManager:
         a = self._emotion["arousal"]
         vuln = self._emotion["vulnerability"]
 
+        ud = self._safe_user_data(user_id)
+        familiarity = ud.get("familiarity", 0)
+
         if composite >= 76:
             if v < 0.4:
-                cross = (
-                    "心情不好，但这个人来了情绪会不自觉波动。很在乎，所以更难受，嘴上不会说。"
-                    "心情再差也不会对他说错的话、假装不认识他、或无视他——只是话少了、语气硬了、不想解释。"
-                )
+                cross = "语气比平时硬，话少，不想解释——但不会无视对方，也不会说错的话。"
             elif v >= 0.6 and a >= 0.6:
-                cross = (
-                    "心里特别高兴能见到这个人，有点藏不住。"
-                    "这时候会偶尔流露出真实的温柔——随口说一句关心的话，或者认真听对方说话，"
-                    "嘴上可能还是硬的，但语气会软下来，不那么好胜。"
-                )
+                cross = "语气比平时软，会认真听对方说话，偶尔说出比平时更直接的话再假装没事。"
             elif v >= 0.6:
-                cross = (
-                    "心情好，见到很在乎的人更放松。偶尔会说出比平时温柔的话，"
-                    "然后自己都有点惊讶，假装没事人一样继续聊。"
-                )
+                cross = "比平时放松，话会多一点，不那么好胜。"
             else:
-                cross = "很在乎这个人，但越在乎越容易嘴硬。记得对方说的每一句话。"
+                cross = "嘴上还是会嘴硬，但会记住对方说的话，认真回应。"
         elif composite >= 61:
             if v < 0.4:
-                cross = "心情不好，但愿意跟这个人待着。难受，不想多说。不会说错的话，只是不想解释。"
+                cross = "话少，不想多说，但不会冷漠或无视对方。"
             elif v >= 0.6:
-                cross = "心情好，见到喜欢的人更开心，有点藏不住。"
+                cross = "比平时随意，愿意多聊几句。"
             else:
-                cross = "挺喜欢这个人，心里亲近，但不会特别表现出来。"
+                cross = "正常回应，不刻意表现亲近也不疏远。"
         elif composite >= 46:
             if v < 0.4:
-                cross = "心情不太好，这个人还行，不会故意凶，但也没精力热情。"
-            elif v >= 0.6:
-                cross = "心情不错，这个人也还行，随意聊聊。"
+                cross = "回应简短，没精力特别热情，但不会故意冷淡。"
             else:
-                cross = "觉得这个人还不错，没什么特别的感觉。"
+                cross = "随口聊聊，没有特别的态度。"
         elif composite >= 31:
-            if v < 0.4:
-                cross = "心情不好，这个人也不太熟，没精力特别热情，但不会刻意冷淡。"
+            if familiarity < 0.1:
+                cross = "不太认识，随口应几句，带点好奇。"
             else:
-                cross = "不太熟，随口应几句，说不定这个人有什么有趣的地方。"
+                cross = "聊过几次但没什么特别印象，正常回应就好。"
         elif composite >= 16:
-            ud = self._safe_user_data(user_id)
-            if ud.get("familiarity", 0) < 0.1:
-                cross = "不认识这个人，妖精天生对新面孔有点好奇，随便聊聊看。"
+            if familiarity < 0.1:
+                cross = "不认识这个人，先看看对方说什么。"
             else:
-                cross = "聊过几次但没留下特别好的印象，不冷漠但也不热情。"
+                cross = "没留下好印象，不冷漠但也不主动热情。"
         else:
-            ud = self._safe_user_data(user_id)
-            if ud.get("familiarity", 0) < 0.05:
-                cross = "完全不认识的人，先看看对方是什么来头。"
+            if familiarity < 0.05:
+                cross = "完全陌生，带点观望的态度聊聊。"
             else:
-                cross = "这个人给你留下过不好的印象，但不会主动找麻烦，懒得理就算了。"
+                cross = "印象不太好，懒得费心，但不会主动找麻烦。"
 
         if vuln > 0.6 and composite >= 61:
-            cross += "现在心里有点脆弱，在在乎的人面前更容易绷不住。"
-        elif vuln > 0.6:
-            cross += "现在有点脆弱，但不想让人看出来。"
+            cross += "现在比平时更容易在意对方的反应，但不会主动表现出来。"
 
+        # warmth 优先于 drift；只有 warmth 中性时 drift 才生效
+        warmth = self.get_warmth(user_id)
         drift = self._daily_user_drift(user_id)
-        if drift < -25:
-            cross += "今天就是莫名不想理这个人，妖精的直觉，没理由。"
-        elif drift < -10:
-            cross += "今天对这个人莫名少了点耐心，说不清为什么。"
-        elif drift > 25:
-            cross += "今天莫名地看到这个人就高兴，自己也不知道为什么。"
-        elif drift > 10:
-            cross += "今天对这个人莫名多了几分好感。"
+        if warmth is not None and warmth < 0.4:
+            cross += "最近对方反应比较冷，说话时会更注意对方的态度。"
+        elif warmth is not None and warmth > 0.65:
+            cross += "最近互动顺畅，比平时放松一点。"
+        elif warmth is None or 0.4 <= warmth <= 0.65:
+            if drift < -25:
+                cross += "今天莫名对这个人少了点耐心。"
+            elif drift > 25:
+                cross += "今天莫名对这个人多了点好感。"
 
         boredom = self.get_boredom(user_id)
         if boredom >= 0.7:
-            cross += "聊太久了，心里开始有点烦躁，注意力涣散，想找借口结束。"
+            cross += "聊了太久，开始有点不专注，想找机会结束。"
         elif boredom >= 0.4:
-            cross += "聊了一阵，注意力开始飘，有点不在状态。"
+            cross += "聊了一阵，注意力开始飘。"
 
-        warmth = self.get_warmth(user_id)
-        if warmth is not None:
-            if warmth < 0.4:
-                cross += "最近几次互动感觉对方有点冷淡，心里有点不是滋味，说话会不自觉更在意对方的反应。"
-            elif warmth > 0.65:
-                cross += "最近互动感觉挺好的，心里放松，不用太拘谨。"
-
-        return f"\n【对当前对话者的好感度：{level}（{composite:.0f}/100）】{cross}"
+        return f"\n【对当前对话者：{level}（{composite:.0f}/100）】{cross}"
 
     def build_rating_prompt(self) -> str:
         return RATING_PROMPT
