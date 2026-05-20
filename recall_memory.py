@@ -61,7 +61,7 @@ COMPRESS_PROMPT = (
     "原始对话：\n{conversations}"
 )
 
-WEEK_SECONDS = 7 * 86400
+WEEK_SECONDS = 3 * 86400
 L2_THRESHOLD = 15
 
 
