@@ -166,12 +166,50 @@ def _save_core(profiles, raw_data, key):
     db.close()
 
 
+def export_all(path="memory_export.txt"):
+    lines = []
+
+    lines.append("=== L1 摘要 ===")
+    for i, e in enumerate(load("recall_summaries")):
+        ts = fmt_ts(e.get("ts", 0))
+        users = e.get("users", [])
+        lines.append(f"[{i}] {ts} users={users}")
+        lines.append(f"  {e.get('text', '')}")
+        lines.append(f"  kw={e.get('kw', [])[:10]}")
+
+    lines.append("\n=== L2 浓缩 ===")
+    for i, e in enumerate(load("recall_digests")):
+        ts = fmt_ts(e.get("ts", 0))
+        users = e.get("users", [])
+        lines.append(f"[{i}] {ts} users={users}")
+        lines.append(f"  {e.get('text', '')}")
+
+    lines.append("\n=== 核心记忆 ===")
+    db = sqlite3.connect(DB)
+    row = db.execute("SELECT value FROM preferences WHERE key='core_memory'").fetchone()
+    db.close()
+    if row:
+        data = json.loads(row[0])
+        profiles = data.get("val", data) if isinstance(data, dict) else data
+        for uid, p in profiles.items():
+            lines.append(f"\n[{p.get('name', uid)}] ({uid})")
+            lines.append(f"  relationship: {p.get('relationship', '')}")
+            lines.append(f"  traits: {p.get('traits', [])}")
+            for ev in p.get("important_events", []):
+                lines.append(f"  event: {ev}")
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    print(f"已导出到 {path}")
+
+
 def main():
     while True:
         print("\n=== 琪露诺记忆管理 ===")
         print("  1  L1 摘要 (recall_summaries)")
         print("  2  L2 浓缩 (recall_digests)")
         print("  3  核心记忆 (core_memory)")
+        print("  4  导出全部到 memory_export.txt")
         print("  q  退出")
         cmd = input("> ").strip()
         if cmd == "q":
@@ -184,6 +222,8 @@ def main():
             menu_entries(entries, "recall_digests", "L2 浓缩")
         elif cmd == "3":
             menu_core()
+        elif cmd == "4":
+            export_all()
 
 
 if __name__ == "__main__":
