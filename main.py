@@ -102,7 +102,7 @@ class Main(Star):
         self._prank_state: dict | None = None
         self._critique_state: dict | None = None
         self._global_notes: list[str] = []
-        self._recent_bot_replies: list[str] = []
+        self._recent_bot_replies: list[dict] = []
         self.jargon_filter = JargonStatisticalFilter()
         self._fact_writeback_cooldown: int = memory_cfg.get("fact_writeback_cooldown", 120)
         self._fact_writeback_last: dict[str, float] = {}
@@ -447,11 +447,13 @@ class Main(Star):
             notes_text = "\n".join(f"- {n}" for n in self._global_notes)
             req.system_prompt += f"\n【你特意记下来的事】\n{notes_text}"
         if self._recent_bot_replies:
-            recent_str = "、".join(
-                f"「{r[:30]}…」" if len(r) > 30 else f"「{r}」"
-                for r in self._recent_bot_replies
-            )
-            req.system_prompt += f"\n【你最近说过】{recent_str}——避免重复相同的开场白、句式和结尾。"
+            recent_lines = []
+            for r in self._recent_bot_replies:
+                text = r["text"]
+                to = r["to"]
+                snippet = f"「{text[:30]}…」" if len(text) > 30 else f"「{text}」"
+                recent_lines.append(f"对{to}说过{snippet}")
+            req.system_prompt += f"\n【你最近说过】{'、'.join(recent_lines)}——避免重复相同的开场白、句式和结尾。"
         req.system_prompt += ABSOLUTE_RULES
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_rating_prompt()
@@ -533,7 +535,7 @@ class Main(Star):
 
         self.user_msg_store.append(sender_id, sender_name, user_msg)
 
-        self._recent_bot_replies.append(bot_reply[:80])
+        self._recent_bot_replies.append({"text": bot_reply[:80], "to": sender_name})
         if len(self._recent_bot_replies) > 5:
             self._recent_bot_replies.pop(0)
         self.heart_flow.on_bot_reply(event.unified_msg_origin)
