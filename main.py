@@ -1106,9 +1106,13 @@ class Main(Star):
                 user_id, user_name, last_bot_reply, stage=1
             )
             if followup:
-                msg = MessageChain().message(followup)
-                await self.context.send_message(session_str, msg)
-                logger.info(f"[私聊跟进] 追问 {user_name}({user_id}): {followup[:30]}")
+                try:
+                    msg = MessageChain().message(followup)
+                    await self.context.send_message(session_str, msg)
+                    logger.info(f"[私聊跟进] 追问 {user_name}({user_id}): {followup[:30]}")
+                except Exception as e:
+                    logger.error(f"[私聊跟进] 发送追问失败: {e}")
+                    return
 
             # 再等5分钟，看用户是否回复
             await asyncio.sleep(300)
@@ -1121,12 +1125,17 @@ class Main(Star):
                 user_id, user_name, last_bot_reply, stage=2
             )
             if monologue:
-                msg = MessageChain().message(monologue)
-                await self.context.send_message(session_str, msg)
-                logger.info(f"[私聊跟进] 自言自语 {user_name}({user_id}): {monologue[:30]}")
+                try:
+                    msg = MessageChain().message(monologue)
+                    await self.context.send_message(session_str, msg)
+                    logger.info(f"[私聊跟进] 自言自语 {user_name}({user_id}): {monologue[:30]}")
+                except Exception as e:
+                    logger.error(f"[私聊跟进] 发送自言自语失败: {e}")
 
         except asyncio.CancelledError:
             pass
+        except Exception as e:
+            logger.error(f"[私聊跟进] flow 异常: {e}")
 
     async def _generate_private_followup(
         self, user_id: str, user_name: str, last_bot_reply: str, stage: int
@@ -1269,8 +1278,11 @@ class Main(Star):
         if self._enable_affinity:
             text, _, _, _ = self.affinity.extract_inner(text)
 
-        msg = MessageChain().message(text)
-        await self.context.send_message(session_str, msg)
+        try:
+            msg = MessageChain().message(text)
+            await self.context.send_message(session_str, msg)
+        except Exception as e:
+            logger.error(f"[琪露诺私聊] 发送失败: {e}")
 
     async def _send_proactive_to_group(self, session_str: str, topic: str):
         try:
