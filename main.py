@@ -362,6 +362,14 @@ class Main(Star):
 
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_status_prompt(sender_id)
+            composite = self.affinity.get_composite(sender_id)
+            warmth = self.affinity.get_warmth(sender_id)
+            if composite >= 76 and warmth is not None and warmth > 0.6:
+                req.system_prompt += (
+                    "\n这个人最近一直对你挺好的，你心里其实很在意。"
+                    "偶尔可以说漏嘴——说出一句比平时温柔的话，然后意识到不对劲，马上找补或者转移话题。"
+                    "这种「说漏嘴」不需要每次都有，自然地偶尔出现就好。"
+                )
 
         # 4. 相关的人（紧接在对话者之后，上下文连贯）
         if self._enable_core_memory:
@@ -399,8 +407,8 @@ class Main(Star):
         if is_random_reply:
             req.system_prompt += (
                 "\n你不是被叫到的，是自己凑过来插嘴的。除非你判断对方是在说你，否则对方不是在和你说话。"
-                "对任何话题都感兴趣——听到不懂的东西会好奇地追问，而不是强行扯到冰雪或青蛙。"
-                "可以从自己的视角发表奇怪但自信的看法，或者揪住某个细节追问。"
+                "好奇心优先——听到不懂的或有趣的细节就追问，不要评价话题有没有意义。"
+                "不要强行扯到冰雪或青蛙，也不要攻击或反驳对方，就是个凑热闹的妖精。"
             )
         elif is_private:
             level = self.affinity.get_level(sender_id) if self._enable_affinity else "普通"
