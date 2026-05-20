@@ -794,10 +794,12 @@ class Main(Star):
 
         if result.get("memory") and self._enable_core_memory:
             is_neg = result.get("delta", 0) < 0
+            importance = max(1, min(10, int(abs(result.get("delta", 0.05)) * 67)))
             await self.core_memory.add_important_event(
-                user_id, result["memory"], nickname=nickname, is_negative=is_neg
+                user_id, result["memory"], nickname=nickname,
+                is_negative=is_neg, importance=importance
             )
-            logger.info(f"[琪露诺关键事件] 写入核心记忆({'负面' if is_neg else '正面'}): {result['memory']}")
+            logger.info(f"[琪露诺关键事件] 写入核心记忆(importance={importance}): {result['memory']}")
 
         await self.affinity.save()
 
@@ -886,8 +888,8 @@ class Main(Star):
             return
 
         profile = self.core_memory.get_profile(user_id)
-        existing_events = profile.get("important_events", []) if profile else []
-        existing_hint = f"已知事件（不要重复）：{'；'.join(existing_events)}\n" if existing_events else ""
+        existing_events = self.core_memory._get_events(profile) if profile else []
+        existing_hint = f"已知事件（不要重复）：{'；'.join(e['text'] for e in existing_events)}\n" if existing_events else ""
 
         prompt = (
             f"{existing_hint}"
@@ -919,7 +921,7 @@ class Main(Star):
         if not text or text.lower() == "null" or text == "无" or len(text) < 4:
             return
 
-        await self.core_memory.add_important_event(user_id, text, nickname=user_name)
+        await self.core_memory.add_important_event(user_id, text, nickname=user_name, importance=3)
         logger.info(f"[事实回写] {user_name}({user_id}): {text}")
 
     async def _build_style_description(self, uid: str, name: str, profile: dict | None) -> str:

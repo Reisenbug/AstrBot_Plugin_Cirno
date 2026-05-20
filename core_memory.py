@@ -128,8 +128,10 @@ class CoreMemory:
             elif original:
                 parts.append(original)
             if events:
-                clean_events = [e[5:] if e.startswith("[neg]") else e for e in events]
-                parts.append("你记得和他之间发生过这些事：" + "；".join(clean_events))
+                migrated = [self._migrate_event(e) for e in events]
+                migrated.sort(key=lambda e: e.get("importance", 5), reverse=True)
+                texts = [e["text"] for e in migrated[:3]]
+                parts.append("你记得和他之间发生过这些事：" + "；".join(texts))
             return "".join(parts)
         else:
             return f"\n当前和你对话的人是「{sender_nickname}」，你不认识这个人。"
@@ -243,11 +245,30 @@ class CoreMemory:
 
         await self.update_profile_via_llm(user_id, summary, context, nickname=nickname)
 
-    @staticmethod
-    def _is_negative_event(event_text: str) -> bool:
-        return event_text.startswith("[neg]")
+    _EVENT_MAX = 5
 
-    async def add_important_event(self, user_id: str, event_text: str, nickname: str = "", is_negative: bool = False):
+    @staticmethod
+    def _migrate_event(e) -> dict:
+        """把旧字符串格式迁移成新字典格式。"""
+        if isinstance(e, dict):
+            return e
+        text = str(e)
+        negative = text.startswith("[neg]")
+        if negative:
+            text = text[5:]
+        return {"text": text[:50], "importance": 3 if negative else 5,
+                "negative": negative, "ts": time.time()}
+
+    def _get_events(self, profile: dict) -> list[dict]:
+        raw = profile.get("important_events", [])
+        migrated = [self._migrate_event(e) for e in raw]
+        profile["important_events"] = migrated
+        return migrated
+
+    async def add_important_event(
+        self, user_id: str, event_text: str, nickname: str = "",
+        is_negative: bool = False, importance: int = 5
+    ):
         user_id = str(user_id)
         profile = self._profiles.get(user_id)
         if not profile:
@@ -261,17 +282,23 @@ class CoreMemory:
             }
             self._profiles[user_id] = profile
 
-        events: list = profile.setdefault("important_events", [])
-        tagged = f"[neg]{event_text[:47]}" if is_negative else event_text[:50]
-        if tagged not in events:
-            if len(events) >= 3:
-                # 优先替换最旧的负面事件，没有负面事件才替换最旧的
-                neg_indices = [i for i, e in enumerate(events) if self._is_negative_event(e)]
-                if neg_indices:
-                    events.pop(neg_indices[0])
-                else:
-                    events.pop(0)
-            events.append(tagged)
-            profile["updated_at"] = time.time()
-            await self.save()
-            logger.info(f"核心记忆：直接写入事件 [{profile.get('name', user_id)}] {tagged}")
+        events = self._get_events(profile)
+        importance = max(1, min(10, importance))
+        new_event = {"text": event_text[:50], "importance": importance,
+                     "negative": is_negative, "ts": time.time()}
+
+        if any(e["text"] == new_event["text"] for e in events):
+            return
+
+        if len(events) >= self._EVENT_MAX:
+            # 替换重要度最低的事件，同重要度时替换最旧的
+            events.sort(key=lambda e: (e.get("importance", 5), e.get("ts", 0)))
+            if events[0].get("importance", 5) <= importance:
+                events.pop(0)
+            else:
+                return  # 新事件重要度不够，不替换
+
+        events.append(new_event)
+        profile["updated_at"] = time.time()
+        await self.save()
+        logger.info(f"核心记忆：写入事件(importance={importance}) [{profile.get('name', user_id)}] {event_text[:40]}")
