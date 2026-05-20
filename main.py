@@ -1246,7 +1246,9 @@ class Main(Star):
         days = (now - self._qzone_last_post_ts) / 86400
         if days < 1:
             return
-        chance = min(0.3, (days - 1) * 0.05)
+        # 每次检查约0.5%基础概率，超过2天后线性提升，上限1.5%
+        # 期望：~2-3天发一条（cron每10分钟，144次/天）
+        chance = min(0.015, 0.005 + (days - 1) * 0.005)
         if random.random() > chance:
             return
         await self._publish_qzone()
