@@ -112,7 +112,7 @@ class CoreMemory:
                 break
         if not lines:
             return ""
-        return "【你想起了一些可能相关的人】\n" + "\n".join(lines)
+        return "【你认识的人】\n" + "\n".join(lines)
 
     def build_sender_prompt(self, sender_id: str, sender_nickname: str) -> str:
         sender_id = str(sender_id)

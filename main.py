@@ -362,16 +362,8 @@ class Main(Star):
 
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_status_prompt(sender_id)
-            composite = self.affinity.get_composite(sender_id)
-            warmth = self.affinity.get_warmth(sender_id)
-            if composite >= 76 and warmth is not None and warmth > 0.6:
-                req.system_prompt += (
-                    "\n这个人最近一直对你挺好的，你心里其实很在意。"
-                    "偶尔可以说漏嘴——说出一句比平时温柔的话，然后意识到不对劲，马上找补或者转移话题。"
-                    "这种「说漏嘴」不需要每次都有，自然地偶尔出现就好。"
-                )
 
-        # 4. 相关的人（紧接在对话者之后，上下文连贯）
+        # 4. 相关的人
         if self._enable_core_memory:
             people_prompt = self.core_memory.build_people_prompt(user_msg_text, sender_id)
             if people_prompt:
@@ -401,7 +393,7 @@ class Main(Star):
         if recall_prompt:
             req.system_prompt += f"\n{recall_prompt}"
         if has_recall:
-            req.system_prompt += "\n脑子里浮现出这些记忆，如果和当前话题有关，随口带一嘴，不要生硬复述。"
+            req.system_prompt += "\n如果以上记忆和当前话题有关，随口带一嘴，不要生硬复述。"
 
         # 6. 场景上下文（随机插嘴 / 私聊 / 普通）
         if is_random_reply:
@@ -730,7 +722,7 @@ class Main(Star):
         return (
             f"\n【恶作剧模式】你现在心情特别好，想搞点事情。这条回复请：{behavior}。"
             f"{escalation_hint}全程保持琪露诺的口气——傲慢、得意、自以为是，不要变成别的风格。"
-            "保持自然，像是你真的这么想，不要解释自己在搞恶作剧。"
+            "保持自然，像是你真的这么想，不要解释自己在搞恶作剧。这次回复可以比平时长一点。"
             f"{remaining_hint}"
         )
 
@@ -743,7 +735,7 @@ class Main(Star):
             "先说你对这件事的第一反应，然后展开分析——可以从幻想乡的视角类比，"
             "可以指出你觉得最可笑或最有意思的地方，可以夸张但要言之有物。"
             "语气自信傲慢，带着「本天才见多识广」的得意，但偶尔会暴露自己其实没太懂。"
-            "回复必须足够长，至少说三个点，不能敷衍。"
+            "这次例外，回复可以长一点，至少说三个点，不能敷衍。"
         )
 
     async def _recall_llm_generate(self, prompt: str):
@@ -866,8 +858,8 @@ class Main(Star):
             f"群里有人说：「{message[:80]}」\n"
             f"你现在的状态：{state_label}\n"
             "你（琪露诺）要不要主动插嘴？\n"
-            "判断标准：话题有趣、你有话说、或者对方说了什么让你忍不住——就回。"
-            "纯闲聊、复读、你完全不感兴趣的话题——就不回。\n"
+            "以下情况输出 no：纯表情包/图片/语音、复读或+1、营销转发内容、话题和你完全无关且没有提到你。\n"
+            "以下情况输出 yes：有有趣的细节让你好奇、对方说了什么你想追问、话题涉及你认识的事物。\n"
             "只输出 yes 或 no。"
         )
 

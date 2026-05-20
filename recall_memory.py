@@ -520,7 +520,7 @@ class RecallMemory:
             lines.append(f"- {time_hint}{who}：{text}")
         if not lines:
             return ""
-        return "【你脑子里浮现出一些模糊的记忆片段】\n" + "\n".join(lines)
+        return "【你想起的事】\n" + "\n".join(lines)
 
     def get_buffer_entries(self) -> list[dict]:
         return list(self._buffer)
