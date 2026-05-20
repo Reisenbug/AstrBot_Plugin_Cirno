@@ -46,14 +46,18 @@ STOP_WORDS = {
 
 COMPRESS_PROMPT = (
     "你是琪露诺的记忆管理器。下面是琪露诺最近和别人聊天的原始对话。\n"
-    "请把这些对话压缩成一段简短的模糊记忆，用第三人称描述。\n"
-    "要求：\n"
-    "- 提取核心话题和关键信息，丢弃表情、口癖、语气词\n"
-    "- 记住谁说了什么、聊了什么话题\n"
-    "- 用「琪露诺好像记得……」的口吻\n"
-    "- 控制在2-3句话以内\n"
-    "- 直接输出记忆内容，不要加任何前缀或解释\n"
-    "- 不要记录食物口味、具体数字等琐碎细节，只保留人与人之间发生的事\n\n"
+    "请判断这段对话是否值得记住，然后决定是否压缩。\n\n"
+    "【不值得记住的情况，直接输出 null】：\n"
+    "- 全是重复的梗、玩笑、起哄（如反复说'大妖精死了''一加一等于九'等）\n"
+    "- 只有闲聊、表情包、语气词，没有实质内容\n"
+    "- 和之前已经记过的内容高度重复，没有新信息\n\n"
+    "【值得记住的情况，输出压缩后的记忆】：\n"
+    "- 有人透露了个人信息（身份、经历、兴趣、习惯）\n"
+    "- 发生了有情感意义的互动（被骂、被夸、产生了真实的争执或共鸣）\n"
+    "- 聊了某个独特的、有意义的话题\n\n"
+    "如果值得记住，用第三人称描述，「琪露诺好像记得……」的口吻，2-3句话以内。\n"
+    "不要记录食物口味、具体数字等琐碎细节。\n"
+    "直接输出记忆内容或 null，不加任何其他解释。\n\n"
     "原始对话：\n{conversations}"
 )
 
@@ -230,6 +234,10 @@ class RecallMemory:
         kw_unique = list(dict.fromkeys(all_kw))[:30]
 
         summary_text = resp.completion_text.strip()
+        if summary_text.lower() == "null" or not summary_text:
+            logger.info("回忆记忆：LLM 判断无价值，跳过存储")
+            return
+
         vec = None
         if self._embed_provider:
             try:
@@ -248,6 +256,8 @@ class RecallMemory:
             "users": list(users),
             "vec": vec,
             "gid": group_id,
+            "score": 1.0,
+            "score_ts": ts_max,
         }
         self._summaries.append(summary)
         logger.info(f"回忆记忆：L1 压缩完成，当前 {len(self._summaries)} 条")
@@ -302,13 +312,26 @@ class RecallMemory:
     async def _cleanup_old(self):
         now = time.time()
         cutoff = now - WEEK_SECONDS
+
+        # score 衰减：每天衰减 10%，低于 0.2 删除
+        decayed = 0
+        for s in self._summaries:
+            if "score" not in s:
+                s["score"] = 1.0
+                s["score_ts"] = s.get("ts", now)
+            days = (now - s["score_ts"]) / 86400
+            if days >= 1:
+                s["score"] = max(0.0, s["score"] * (0.9 ** days))
+                s["score_ts"] = now
+                decayed += 1
+
         before_s = len(self._summaries)
         before_d = len(self._digests)
-        self._summaries = [s for s in self._summaries if s.get("ts", 0) > cutoff]
+        self._summaries = [s for s in self._summaries if s.get("score", 1.0) >= 0.2 and s.get("ts", 0) > cutoff]
         self._digests = [d for d in self._digests if d.get("ts", 0) > cutoff]
         removed = (before_s - len(self._summaries)) + (before_d - len(self._digests))
-        if removed:
-            logger.info(f"回忆记忆：清理过期记录 {removed} 条")
+        if removed or decayed:
+            logger.info(f"回忆记忆：衰减 {decayed} 条，清理 {removed} 条")
             await self.save()
 
     def _score_entry_bm25(
@@ -342,6 +365,13 @@ class RecallMemory:
         result.sort(key=lambda x: x[0], reverse=True)
         return result
 
+    def _boost_score(self, entries: list[dict]):
+        """命中的摘要 score +0.1，上限 2.0。"""
+        for e in entries:
+            if "score" in e:
+                e["score"] = min(2.0, e["score"] + 0.1)
+                e["score_ts"] = time.time()
+
     def _user_first_merge(
         self, scored: list[tuple[float, dict]], current_user_id: str, top_k: int
     ) -> list[dict]:
@@ -372,8 +402,11 @@ class RecallMemory:
         scored.sort(key=lambda x: x[0], reverse=True)
         scored = self._apply_diversity(scored)
         if current_user_id:
-            return self._user_first_merge(scored, current_user_id, top_k)
-        return [entry for _, entry in scored[:top_k]]
+            results = self._user_first_merge(scored, current_user_id, top_k)
+        else:
+            results = [entry for _, entry in scored[:top_k]]
+        self._boost_score(results)
+        return results
 
     async def search_async(
         self, query: str, current_user_id: str | None = None, top_k: int | None = None,
@@ -400,8 +433,11 @@ class RecallMemory:
         if not self._embed_provider:
             bm25_scored = self._apply_diversity(bm25_scored)
             if current_user_id:
-                return self._user_first_merge(bm25_scored, current_user_id, top_k)
-            return [e for _, e in bm25_scored[:top_k]]
+                results = self._user_first_merge(bm25_scored, current_user_id, top_k)
+            else:
+                results = [e for _, e in bm25_scored[:top_k]]
+            self._boost_score(results)
+            return results
 
         # Semantic path
         try:
@@ -445,8 +481,11 @@ class RecallMemory:
         fused_scored = [(score, id_to_entry[eid]) for eid, score in fused]
         fused_scored = self._apply_diversity(fused_scored)
         if current_user_id:
-            return self._user_first_merge(fused_scored, current_user_id, top_k)
-        return [entry for _, entry in fused_scored[:top_k]]
+            results = self._user_first_merge(fused_scored, current_user_id, top_k)
+        else:
+            results = [entry for _, entry in fused_scored[:top_k]]
+        self._boost_score(results)
+        return results
 
     def get_recent_by_user(self, user_id: str, limit: int = 15) -> list[dict]:
         user_id = str(user_id)
