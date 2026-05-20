@@ -409,16 +409,21 @@ class AffinityManager:
                 cross = "觉得这个人还不错，没什么特别的感觉。"
         elif composite >= 31:
             if v < 0.4:
-                cross = "心情不好，这个人也不熟，懒得费心。"
+                cross = "心情不好，这个人也不太熟，没精力特别热情，但不会刻意冷淡。"
             else:
-                cross = "不熟，没什么感情，就是普通回应。"
+                cross = "不太熟，随口应几句，说不定这个人有什么有趣的地方。"
         elif composite >= 16:
-            cross = "对这个人没什么感觉，可有可无。"
-        else:
-            if v < 0.4:
-                cross = "心情本来就差，碰到这个人更烦。"
+            ud = self._safe_user_data(user_id)
+            if ud.get("familiarity", 0) < 0.1:
+                cross = "不认识这个人，妖精天生对新面孔有点好奇，随便聊聊看。"
             else:
-                cross = "不太想理这个人。"
+                cross = "聊过几次但没留下特别好的印象，不冷漠但也不热情。"
+        else:
+            ud = self._safe_user_data(user_id)
+            if ud.get("familiarity", 0) < 0.05:
+                cross = "完全不认识的人，先看看对方是什么来头。"
+            else:
+                cross = "这个人给你留下过不好的印象，但不会主动找麻烦，懒得理就算了。"
 
         if vuln > 0.6 and composite >= 61:
             cross += "现在心里有点脆弱，在在乎的人面前更容易绷不住。"
