@@ -329,9 +329,8 @@ class Main(Star):
         if is_random_reply:
             req.system_prompt += (
                 "\n你不是被叫到的，是自己凑过来插嘴的。除非你判断对方是在说你，否则对方不是在和你说话。"
-                "如果话题你不了解，绝对不要承认不知道——从字面意思或听起来像什么去猜，"
-                "然后基于你的理解（通常是错的）自信地参与讨论。"
-                "或者被某个具体的细节吸引，只追问那一个点。"
+                "对任何话题都感兴趣——听到不懂的东西会好奇地追问，而不是强行扯到冰雪或青蛙。"
+                "可以从自己的视角发表奇怪但自信的看法，或者揪住某个细节追问。"
             )
         elif is_private:
             level = self.affinity.get_level(sender_id) if self._enable_affinity else "普通"
