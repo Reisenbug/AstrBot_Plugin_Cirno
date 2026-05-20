@@ -216,6 +216,22 @@ class Main(Star):
             logger.info("琪露诺每日用户画像 cron job 已注册，每日凌晨3点触发")
 
 
+    _CATEGORY_QQ_STATUS = {
+        "rest":      (10, 1016),  # 睡觉
+        "rare":      (10, 1028),  # 听歌
+        "social":    (60, 0),     # Q我吧
+    }
+
+    async def _sync_qq_status(self, bot):
+        from .cirno_states import CIRNO_STATES
+        cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
+        status, ext_status = self._CATEGORY_QQ_STATUS.get(cat, (10, 0))
+        try:
+            await bot.call_action("set_online_status", status=status, ext_status=ext_status, battery_status=0)
+            logger.info(f"[琪露诺状态] QQ在线状态已同步: category={cat} status={status} ext={ext_status}")
+        except Exception as e:
+            logger.debug(f"[琪露诺状态] QQ在线状态同步失败: {e}")
+
     def _replace_at_with_names(self, text: str) -> str:
         def _repl(m):
             qq = m.group(2)
@@ -235,6 +251,9 @@ class Main(Star):
         transitioned = self.state_manager.maybe_transition()
         if transitioned:
             await self.put_kv_data("state_data", self.state_manager.to_dict())
+            bot = getattr(event, "bot", None)
+            if bot:
+                asyncio.create_task(self._sync_qq_status(bot))
 
         if event.session.message_type == MessageType.GROUP_MESSAGE:
             umo = event.unified_msg_origin
