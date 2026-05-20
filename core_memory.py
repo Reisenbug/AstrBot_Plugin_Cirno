@@ -187,7 +187,7 @@ class CoreMemory:
             background=bg,
             relationship=profile.get("relationship", "不太熟"),
             traits=", ".join(profile.get("traits", [])) or "暂无",
-            events=", ".join(profile.get("important_events", [])) or "暂无",
+            events=", ".join(e["text"] if isinstance(e, dict) else str(e) for e in profile.get("important_events", [])) or "暂无",
             summary=recent_summary,
         )
 
