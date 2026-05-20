@@ -156,6 +156,12 @@
         "type": "string",
         "default": "最强的琪露诺！",
         "hint": "固定昵称，不随状态变化。留空则使用状态对应的昵称"
+      },
+      "enable_qzone_post": {
+        "description": "启用自动发说说",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后琪露诺会概率性地发QQ说说，超过1天未发时开始有概率触发，最高30%/次"
       }
     }
   },

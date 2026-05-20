@@ -111,6 +111,9 @@ class Main(Star):
         self._enable_nickname_sync = profile_cfg.get("enable_nickname_sync", False)
         self._enable_signature_sync = profile_cfg.get("enable_signature_sync", False)
         self._nickname_prefix = profile_cfg.get("nickname_prefix", "最强的琪露诺！")
+        self._enable_qzone_post = profile_cfg.get("enable_qzone_post", False)
+        self._qzone_last_post_ts: float = 0.0
+        self._cached_bot = None
         self._poke_streaks: dict[str, dict] = {}
         self._private_last_user_msg: dict[str, float] = {}
         self._private_followup_tasks: dict[str, asyncio.Task] = {}
@@ -209,6 +212,10 @@ class Main(Star):
                 f"琪露诺主动发言 cron job 已注册，间隔 {interval} 分钟"
             )
 
+        saved_qzone_ts = await self.get_kv_data("qzone_last_post_ts", None)
+        if saved_qzone_ts:
+            self._qzone_last_post_ts = float(saved_qzone_ts)
+
         if self._enable_core_memory:
             daily_job = await self.context.cron_manager.add_basic_job(
                 name="cirno_daily_profile_update",
@@ -269,11 +276,13 @@ class Main(Star):
             event.stop_event()
             return
         event.set_extra("cirno_llm_start", time.time())
+        bot = getattr(event, "bot", None)
+        if bot:
+            self._cached_bot = bot
         self.state_manager.on_user_interaction()
         transitioned = self.state_manager.maybe_transition()
         if transitioned:
             await self.put_kv_data("state_data", self.state_manager.to_dict())
-            bot = getattr(event, "bot", None)
             if bot:
                 asyncio.create_task(self._sync_qq_status(bot))
 
@@ -1128,6 +1137,9 @@ class Main(Star):
         if self._enable_private_proactive and self._private_targets:
             await self._proactive_private_check()
 
+        if self._enable_qzone_post and self._cached_bot:
+            await self._maybe_post_qzone()
+
     async def _private_followup_flow(
         self, user_id: str, user_name: str, last_bot_reply: str, session_str: str
     ):
@@ -1228,6 +1240,106 @@ class Main(Star):
         if self._enable_affinity:
             text, _, _, _ = self.affinity.extract_inner(text)
         return text
+
+    async def _maybe_post_qzone(self):
+        now = time.time()
+        days = (now - self._qzone_last_post_ts) / 86400
+        if days < 1:
+            return
+        chance = min(0.3, (days - 1) * 0.05)
+        if random.random() > chance:
+            return
+        await self._publish_qzone()
+
+    async def _publish_qzone(self):
+        try:
+            provider_id = self.context.get_all_providers()[0].meta().id
+        except Exception:
+            return
+
+        from .cirno_states import CIRNO_STATES
+        state = CIRNO_STATES.get(self.state_manager.current_state, {})
+        label = state.get("label", "")
+        topics = state.get("proactive_topics", [])
+        topic_hint = random.choice(topics) if topics else label
+
+        prompt = (
+            f"琪露诺现在的状态：{label}。\n"
+            f"最近发生的事：{topic_hint}\n\n"
+            "用琪露诺的口气写一条QQ说说，像是在记录今天的心情或者发生的事。"
+            "要求：一到两句话，口气随意，可以傲娇、可以撒娇、可以抱怨，带点真实感。"
+            "不要加emoji，不要加标签，直接输出那句话。"
+        )
+        try:
+            resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt,
+                system_prompt="你是琪露诺，只输出一到两句话的说说内容。",
+            )
+        except Exception as e:
+            logger.error(f"[说说] LLM 生成失败: {e}")
+            return
+
+        if not resp or not resp.completion_text:
+            return
+        text = resp.completion_text.strip()
+        if self._enable_affinity:
+            text, _, _, _ = self.affinity.extract_inner(text)
+
+        result = await self._post_to_qzone(text)
+        if result.get("success"):
+            self._qzone_last_post_ts = time.time()
+            await self.put_kv_data("qzone_last_post_ts", self._qzone_last_post_ts)
+            logger.info(f"[说说] 发表成功: {text[:40]}")
+        else:
+            logger.warning(f"[说说] 发表失败: {result.get('msg', '')}")
+
+    async def _post_to_qzone(self, text: str) -> dict:
+        import aiohttp
+        from urllib.parse import urlencode
+        bot = self._cached_bot
+        if not bot:
+            return {"success": False, "msg": "无bot对象"}
+        try:
+            login_info = await bot.call_action("get_login_info")
+            uin = str(login_info.get("user_id", ""))
+            if not uin:
+                return {"success": False, "msg": "获取UIN失败"}
+            try:
+                creds = await bot.call_action("get_credentials", domain="qzone.qq.com")
+                cookie = creds.get("cookies", "")
+            except Exception:
+                try:
+                    creds = await bot.call_action("get_cookies", domain="qzone.qq.com")
+                    cookie = creds.get("cookies", "")
+                except Exception:
+                    return {"success": False, "msg": "获取cookie失败"}
+            if not cookie:
+                return {"success": False, "msg": "cookie为空"}
+            cookie_dict = {k: v for item in cookie.split(";") if "=" in item for k, v in [item.strip().split("=", 1)]}
+            skey = cookie_dict.get("p_skey") or cookie_dict.get("skey", "")
+            if not skey:
+                return {"success": False, "msg": "获取skey失败"}
+            hash_val = 5381
+            for char in skey:
+                hash_val += (hash_val << 5) + ord(char)
+            gtk = str(hash_val & 0x7FFFFFFF)
+            url = f"https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6?g_tk={gtk}"
+            payload = {"syn_tweet_verson": "1", "con": text, "feedversion": "1", "ver": "1",
+                       "ugc_right": "1", "to_sign": "0", "hostuin": uin, "code_version": "1",
+                       "format": "fs", "qzreferrer": f"https://user.qzone.qq.com/{uin}/infocenter"}
+            headers = {"Content-Type": "application/x-www-form-urlencoded", "Cookie": cookie,
+                       "Origin": "https://user.qzone.qq.com",
+                       "Referer": f"https://user.qzone.qq.com/{uin}/infocenter",
+                       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            async with aiohttp.ClientSession() as sess:
+                async with sess.post(url, data=urlencode(payload), headers=headers, timeout=30) as r:
+                    resp_text = await r.text()
+                    if '"code":0' in resp_text or '"code": 0' in resp_text:
+                        return {"success": True}
+                    return {"success": False, "msg": resp_text[:200]}
+        except Exception as e:
+            return {"success": False, "msg": str(e)}
 
     async def _proactive_private_check(self):
         from .cirno_states import CIRNO_STATES
