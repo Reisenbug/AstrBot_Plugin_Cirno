@@ -852,16 +852,21 @@ class Main(Star):
             f"{existing_hint}"
             f"对话者{user_name}说：「{user_msg}」\n"
             f"琪露诺回答：「{bot_reply[:100]}」\n\n"
-            "从对话者说的话中提取稳定的个人事实（兴趣、习惯、经历、身份等），用一句话描述。"
-            "要求：必须有用户的明确陈述作为依据，不能推测。如果没有值得记录的新事实，输出 null。\n"
-            "只输出一句话（不超过20字）或 null，不加任何前缀。"
+            f"任务：从【{user_name}说的话】中提取关于{user_name}本人的稳定事实（兴趣、习惯、经历、身份、偏好等）。\n"
+            "严格要求：\n"
+            f"- 只提取{user_name}关于自己的明确陈述，不能推测\n"
+            "- 不要提取琪露诺的行为、感受或状态\n"
+            "- 不要提取玩笑话、反问句、假设性内容\n"
+            "- 不要提取关于第三方（大妖精、灵梦等）的描述\n"
+            "- 如果{user_name}没有说任何关于自己的稳定事实，输出 null\n"
+            f"输出格式：「{user_name}+事实」，不超过20字，或直接输出 null。"
         )
 
         try:
             resp = await self.context.llm_generate(
                 chat_provider_id=provider_id,
                 prompt=prompt,
-                system_prompt="你是一个信息提取器，只输出一句话或null。",
+                system_prompt="你是一个严格的信息提取器，只提取对话者本人的事实，只输出一句话或null。",
             )
         except Exception as e:
             logger.debug(f"[事实回写] LLM 调用失败: {e}")

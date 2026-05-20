@@ -4,8 +4,22 @@ import time
 from collections import Counter
 
 import jieba
+import jieba.posseg as pseg
 
 from astrbot.api import logger
+
+_TOUHOU_WORDS = [
+    "琪露诺", "大妖精", "雾之湖", "符卡", "幻想乡", "博丽灵梦", "雾雨魔理沙",
+    "红魔馆", "永远亭", "命莲寺", "神灵庙", "冰之妖精", "冰魔法", "冰弹幕",
+    "射命丸文", "八云紫", "八云蓝", "西行妖", "冴月麟", "太阳花妖精",
+    "人间之里", "博丽神社", "迷途竹林", "妖怪山", "彼岸", "冥界",
+]
+
+def _init_jieba():
+    for w in _TOUHOU_WORDS:
+        jieba.add_word(w, freq=10000, tag="nz")
+
+_init_jieba()
 
 STOP_WORDS = {
     "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一",
@@ -20,7 +34,8 @@ STOP_WORDS = {
     "知道", "觉得", "感觉", "应该", "可能", "已经", "正在", "开始",
     "一些", "这样", "那么", "然后", "时候", "东西", "这么", "怎样",
     "这里", "那里", "什么样", "为什么", "不过", "而且", "或者", "以及",
-    "关于", "通过", "一样",
+    "关于", "通过", "一样", "都还没", "还没", "没有", "一下", "一点",
+    "一会", "一会儿", "好像", "感觉", "觉得", "应该", "可能", "已经",
     "the", "a", "an", "is", "are", "was", "were", "be", "been",
     "i", "you", "he", "she", "it", "we", "they", "me", "him", "her",
     "my", "your", "his", "its", "our", "their", "this", "that",
@@ -48,8 +63,14 @@ L2_THRESHOLD = 15
 
 def extract_keywords(text: str) -> list[str]:
     text = text.lower()
-    words = jieba.lcut(text)
-    return [w.strip() for w in words if w.strip() and w.strip() not in STOP_WORDS and len(w.strip()) > 1]
+    words = pseg.cut(text)
+    return [
+        w.word.strip() for w in words
+        if w.word.strip()
+        and w.word.strip() not in STOP_WORDS
+        and len(w.word.strip()) > 1
+        and (w.flag.startswith("n") or w.flag in ("eng",))
+    ]
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
