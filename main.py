@@ -387,7 +387,8 @@ class Main(Star):
                         f"[琪露诺回忆检索] 命中 {len(memories)} 条: "
                         + ", ".join(f"「{m.get('text', '')[:30]}」" for m in memories)
                     )
-                recall_prompt = self.recall_memory.build_recall_prompt(memories)
+                uid_to_name = {uid: p.get("name", uid) for uid, p in self.core_memory._profiles.items()} if self._enable_core_memory else {}
+                recall_prompt = self.recall_memory.build_recall_prompt(memories, uid_to_name=uid_to_name)
 
         if recall_prompt:
             req.system_prompt += f"\n{recall_prompt}"

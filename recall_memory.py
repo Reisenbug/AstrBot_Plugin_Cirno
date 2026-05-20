@@ -493,7 +493,7 @@ class RecallMemory:
         entries.sort(key=lambda e: e.get("ts", 0), reverse=True)
         return entries[:limit]
 
-    def build_recall_prompt(self, memories: list[dict]) -> str:
+    def build_recall_prompt(self, memories: list[dict], uid_to_name: dict | None = None) -> str:
         if not memories:
             return ""
         lines = []
@@ -511,7 +511,13 @@ class RecallMemory:
                 time_hint = "前几天"
             else:
                 time_hint = "之前"
-            lines.append(f"- {time_hint}：{text}")
+            if uid_to_name:
+                users = m.get("users", [])
+                names = [uid_to_name[u] for u in users if u in uid_to_name]
+                who = f"（与{'、'.join(names)}相关）" if names else ""
+            else:
+                who = ""
+            lines.append(f"- {time_hint}{who}：{text}")
         if not lines:
             return ""
         return "【你脑子里浮现出一些模糊的记忆片段】\n" + "\n".join(lines)
