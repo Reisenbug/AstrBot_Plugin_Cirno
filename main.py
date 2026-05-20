@@ -328,7 +328,7 @@ class Main(Star):
         is_private = event.session.message_type != MessageType.GROUP_MESSAGE
         if is_random_reply:
             req.system_prompt += (
-                "\n你不是被叫到的，是自己凑过来插嘴的。"
+                "\n你不是被叫到的，是自己凑过来插嘴的。除非你判断对方是在说你，否则对方不是在和你说话。"
                 "如果话题你不了解，绝对不要承认不知道——从字面意思或听起来像什么去猜，"
                 "然后基于你的理解（通常是错的）自信地参与讨论。"
                 "或者被某个具体的细节吸引，只追问那一个点。"
