@@ -52,17 +52,12 @@ _SENTIMENT_TO_VALENCE = {
 }
 
 RATING_PROMPT = (
-    "\n【必须遵守】你的每一条回复末尾都必须附上情绪标签，没有例外。"
-    "格式：<inner>{\"sentiment\": \"情感\", \"intensity\": \"强度\", \"interaction_type\": \"类型\", \"reason\": \"一句话\"}</inner>"
-    "\nsentiment 只能是：positive（对方说的话让你感觉好）/ neutral（没什么特别感觉）/ negative（让你感觉不好）"
-    "——注意评估的是对方说的话对你情绪的影响，不是对方自己的情绪状态。"
-    "\nintensity 只能是：mild（轻微）/ strong（明显）"
-    "\ninteraction_type 从以下选一个：compliment(被夸赞)/thanks(被感谢)/tease(被调侃)/care(被关心)/insult(被侮辱)/share(对方分享秘密或重要事)/worry(察觉对方状态不好，你有点担心)/apology(对方在道歉或认错)/default(普通聊天)"
-    "\n示例：被夸可爱→<inner>{\"sentiment\": \"positive\", \"intensity\": \"mild\", \"interaction_type\": \"compliment\", \"reason\": \"被夸了有点开心\"}</inner>"
-    "\n被骂笨蛋→<inner>{\"sentiment\": \"negative\", \"intensity\": \"strong\", \"interaction_type\": \"insult\", \"reason\": \"被骂了很气\"}</inner>"
-    "\n对方说心情不好→<inner>{\"sentiment\": \"neutral\", \"intensity\": \"mild\", \"interaction_type\": \"worry\", \"reason\": \"有点担心对方\"}</inner>"
-    "\n对方道歉认错→<inner>{\"sentiment\": \"positive\", \"intensity\": \"mild\", \"interaction_type\": \"apology\", \"reason\": \"对方在认错，心里松了一点\"}</inner>"
-    "\n不要在正文中提及这个标签。漏掉标签视为违规。"
+    "\n【必须遵守】每条回复末尾附上情绪标签，格式："
+    "<inner>{\"sentiment\": \"positive/neutral/negative\", \"intensity\": \"mild/strong\", "
+    "\"interaction_type\": \"类型\", \"reason\": \"一句话\"}</inner>"
+    "\nsentiment评估对方说的话对你情绪的影响（不是对方的情绪状态）。"
+    "\ninteraction_type: compliment/thanks/tease/care/insult/share/worry/apology/default"
+    "\n不要在正文中提及标签。"
 )
 
 KEY_EVENT_PROMPT = """你是琪露诺，幻想乡最强的冰精灵。

@@ -264,11 +264,6 @@ class Main(Star):
                 old_task.cancel()
         if self._enable_core_memory:
             user_msg_text = self._replace_at_with_names(user_msg_text)
-            people_prompt = self.core_memory.build_people_prompt(user_msg_text, sender_id)
-            if people_prompt:
-                req.system_prompt += f"\n{people_prompt}"
-        else:
-            req.system_prompt += "\n你认识一些人，但现在记忆模糊。"
 
         _CRITIQUE_KEYWORDS = ("评价一下", "评价下", "点评一下", "点评下", "你怎么看", "怎么看这", "锐评", "锐评一下")
         if self._critique_state is None and any(kw in user_msg_text for kw in _CRITIQUE_KEYWORDS):
@@ -280,14 +275,14 @@ class Main(Star):
         current_category = CIRNO_STATES.get(
             self.state_manager.current_state, {}
         ).get("category", "")
-
-        req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
         suppress_recall = current_category == "rest"
 
+        # 1. HeartFlow/TimingGate 门控（随机插嘴场景）
         is_random_reply = (
             not event.is_at_or_wake_command
             and event.session.message_type == MessageType.GROUP_MESSAGE
         )
+        is_private = event.session.message_type != MessageType.GROUP_MESSAGE
         session_id = event.unified_msg_origin
         if is_random_reply:
             self.heart_flow.update(session_id, user_msg_text)
@@ -305,6 +300,28 @@ class Main(Star):
                 return
             logger.info(f"[TimingGate] 决定插嘴")
 
+        # 2. 状态机
+        req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
+
+        # 3. 对话者身份 + 好感度（放在一起，让 LLM 先建立对"这个人"的完整认知）
+        if self._enable_core_memory:
+            req.system_prompt += self.core_memory.build_sender_prompt(sender_id, sender_nickname)
+            self.core_memory.record_interaction(sender_id)
+        else:
+            req.system_prompt += f"\n当前和你对话的人QQ号是{sender_id}，QQ昵称是「{sender_nickname}」。"
+
+        if self._enable_affinity:
+            req.system_prompt += self.affinity.build_status_prompt(sender_id)
+
+        # 4. 相关的人（紧接在对话者之后，上下文连贯）
+        if self._enable_core_memory:
+            people_prompt = self.core_memory.build_people_prompt(user_msg_text, sender_id)
+            if people_prompt:
+                req.system_prompt += f"\n{people_prompt}"
+        else:
+            req.system_prompt += "\n你认识一些人，但现在记忆模糊。"
+
+        # 5. 回忆
         has_recall = False
         recall_prompt = ""
         if self._enable_recall_memory and not suppress_recall:
@@ -318,14 +335,16 @@ class Main(Star):
                     has_recall = True
                     logger.info(
                         f"[琪露诺回忆检索] 命中 {len(memories)} 条: "
-                        + ", ".join(
-                            f"「{m.get('text', '')[:30]}」"
-                            for m in memories
-                        )
+                        + ", ".join(f"「{m.get('text', '')[:30]}」" for m in memories)
                     )
                 recall_prompt = self.recall_memory.build_recall_prompt(memories)
 
-        is_private = event.session.message_type != MessageType.GROUP_MESSAGE
+        if recall_prompt:
+            req.system_prompt += f"\n{recall_prompt}"
+        if has_recall:
+            req.system_prompt += "\n脑子里浮现出这些记忆，如果和当前话题有关，随口带一嘴，不要生硬复述。"
+
+        # 6. 场景上下文（随机插嘴 / 私聊 / 普通）
         if is_random_reply:
             req.system_prompt += (
                 "\n你不是被叫到的，是自己凑过来插嘴的。除非你判断对方是在说你，否则对方不是在和你说话。"
@@ -336,46 +355,19 @@ class Main(Star):
             level = self.affinity.get_level(sender_id) if self._enable_affinity else "普通"
             is_close = level in ("喜欢", "很喜欢")
             private_prompt = (
-                "\n你们在私聊，没有旁观者。"
-                "你不需要表演给别人看，说话可以比群里更真实——少一点跳脱和夸张，多一点真心话。"
-                "对方特意打开聊天窗口找你，这本身就说明他想和你说话，不只是需要你回答问题。"
-                "你会在意「他为什么找我」，即使不说出口。"
-                "话题有连续性，认真接住对方说的每一句，不要随意跳题。"
+                "\n你们在私聊，没有旁观者。说话比群里更真实，少一点跳脱和夸张，多一点真心话。"
+                "对方特意找你说话，你会在意「他为什么找我」，即使不说出口。"
+                "认真接住对方说的每一句，不要随意跳题。"
             )
             if is_close:
-                private_prompt += "好感度高的人私聊你，你不需要撑面子，可以不嘴硬，说话更松弛，偶尔流露真实感受。"
+                private_prompt += "你不需要撑面子，说话更松弛，偶尔流露真实感受。"
             req.system_prompt += private_prompt
 
-        if self._enable_core_memory:
-            req.system_prompt += self.core_memory.build_sender_prompt(
-                sender_id, sender_nickname
-            )
-            self.core_memory.record_interaction(sender_id)
-        else:
-            req.system_prompt += (
-                f"\n当前和你对话的人QQ号是{sender_id}，QQ昵称是「{sender_nickname}」。"
-            )
-
-        if self._enable_affinity:
-            req.system_prompt += self.affinity.build_status_prompt(sender_id)
-
-        if recall_prompt:
-            req.system_prompt += f"\n{recall_prompt}"
-        if has_recall:
-            req.system_prompt += (
-                "\n如果对方聊的话题和你记忆中的内容有关，你可以自然地提起你还记得之前聊过的事。"
-                "不要生硬地复述记忆内容，而是像真的想起来了一样随口带一嘴。"
-            )
-
+        # 7. 当前特殊事件（戳一戳余怒）
         poke_info = self._poke_streaks.get(sender_id, {})
         if poke_info.get("angry") and time.time() - poke_info.get("last_ts", 0) < self._POKE_COOLDOWN * 2:
-            req.system_prompt += "\n【刚才的事】这个人刚才一直戳你不说话，你被烦到有点生气，还没完全消气。这条回复带点余怒，语气硬一点，但不用特别点明原因。"
+            req.system_prompt += "\n【刚才的事】这个人刚才一直戳你不说话，你被烦到有点生气，还没完全消气。语气硬一点，但不用点明原因。"
             self._poke_streaks[sender_id]["angry"] = False
-
-        req.system_prompt += (
-            "\n如果用户用括号描述情景或旁白，你知道这是在演戏、开玩笑。"
-            "你可以配合玩但不要入戏太深，保持琪露诺的正常状态，不要被剧情带走。"
-        )
         if self._prank_state is not None:
             req.system_prompt += self._build_prank_prompt(sender_id, sender_nickname)
 
