@@ -343,13 +343,6 @@ class Main(Star):
                 return
             logger.info(f"[HeartFlow] 兴趣度={interest:.2f}，继续插嘴")
 
-            gate_decision = await self._timing_gate(user_msg_text, sender_nickname)
-            if not gate_decision:
-                logger.info(f"[TimingGate] 决定不插嘴: {user_msg_text[:40]}")
-                event.stop_event()
-                return
-            logger.info(f"[TimingGate] 决定插嘴")
-
         # 2. 状态机
         req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
 
