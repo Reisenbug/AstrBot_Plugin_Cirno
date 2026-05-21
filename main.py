@@ -866,11 +866,17 @@ class Main(Star):
         )
 
         try:
-            resp = await self.context.llm_generate(
-                chat_provider_id=provider_id,
-                prompt=prompt,
-                system_prompt="你是琪露诺，只输出 yes 或 no。",
+            resp = await asyncio.wait_for(
+                self.context.llm_generate(
+                    chat_provider_id=provider_id,
+                    prompt=prompt,
+                    system_prompt="你是琪露诺，只输出 yes 或 no。",
+                ),
+                timeout=15.0,
             )
+        except asyncio.TimeoutError:
+            logger.debug("[TimingGate] 超时，默认不插嘴")
+            return False
         except Exception as e:
             logger.debug(f"[TimingGate] LLM 调用失败，默认插嘴: {e}")
             return True
