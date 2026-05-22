@@ -493,7 +493,7 @@ class RecallMemory:
         entries.sort(key=lambda e: e.get("ts", 0), reverse=True)
         return entries[:limit]
 
-    def build_recall_prompt(self, memories: list[dict], uid_to_name: dict | None = None) -> str:
+    def build_recall_prompt(self, memories: list[dict], uid_to_name: dict | None = None, is_private: bool = False) -> str:
         if not memories:
             return ""
         lines = []
@@ -517,7 +517,10 @@ class RecallMemory:
                 who = f"（与{'、'.join(names)}相关）" if names else ""
             else:
                 who = ""
-            lines.append(f"- {time_hint}{who}：{text}")
+            scene = ""
+            if is_private and m.get("gid"):
+                scene = "（在群里）"
+            lines.append(f"- {time_hint}{scene}{who}：{text}")
         if not lines:
             return ""
         return "【你想起的事】\n" + "\n".join(lines)

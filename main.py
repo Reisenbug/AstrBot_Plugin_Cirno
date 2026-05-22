@@ -381,7 +381,7 @@ class Main(Star):
                         + ", ".join(f"「{m.get('text', '')[:30]}」" for m in memories)
                     )
                 uid_to_name = {uid: p.get("name", uid) for uid, p in self.core_memory._profiles.items()} if self._enable_core_memory else {}
-                recall_prompt = self.recall_memory.build_recall_prompt(memories, uid_to_name=uid_to_name)
+                recall_prompt = self.recall_memory.build_recall_prompt(memories, uid_to_name=uid_to_name, is_private=is_private)
 
         if recall_prompt:
             req.system_prompt += f"\n{recall_prompt}"
