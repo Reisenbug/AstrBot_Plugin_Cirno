@@ -679,7 +679,7 @@ class Main(Star):
         "揪住{name}说的话里某个具体的词或细节，反复追问那一个点，不管对方怎么回答都往那个细节上转。越问越细、越问越偏，像是真的对那个细节着了迷，完全不在意对方想说的重点是什么",
         "疯狂附和对方说的话，同意程度极其夸张，好像对方说了什么惊天大道理",
         "假装完全听不懂对方说的话，对非常正常的句子一直追问「什么意思」，对方越解释越装傻",
-        "__imitate__",  # 模仿发言者，由代码动态替换
+        "__imitate__",  # 模仿发言者风格，同时自言自语，由代码动态替换
     ]
 
     def _start_prank(self, triggered_by: str, imitate_style: str = "") -> dict:
@@ -714,7 +714,12 @@ class Main(Star):
         if raw == "__imitate__":
             style = self._prank_state.get("imitate_style", "")
             if style:
-                behavior = f"突然开始完全模仿{sender_name}的说话风格来回复——包括他的语气词、句式、用词习惯，越像越好，但内容还是你琪露诺的想法。风格参考：{style[:100]}"
+                behavior = (
+                    f"突然像是觉醒了第二人格——用{sender_name}的说话风格和自己对话。"
+                    f"每句回复必须以「……」开头，然后用{sender_name}的语气词、句式说出你琪露诺内心的想法，"
+                    f"像是另一个自己在借壳说话，内容是真实的情绪或看法，但表达方式完全是{sender_name}的风格。"
+                    f"风格参考：{style[:100]}"
+                )
             else:
                 pool_no_imitate = [i for i in pool if self.PRANK_BEHAVIORS[i % len(self.PRANK_BEHAVIORS)] != "__imitate__"]
                 idx = random.choice(pool_no_imitate) if pool_no_imitate else 0
