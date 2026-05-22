@@ -91,7 +91,7 @@ class Main(Star):
         self._daily_profile_cron_id: str | None = None
         self._daily_profile_group = "1050431190"
         self._last_full_prompt: str = ""
-        self._imitation_state: dict | None = None
+        self._imitation_state: dict[str, dict] = {}  # session_id -> state
         data_dir = str(StarTools.get_data_dir("astrbot_plugin_cirno"))
         self.user_msg_store = UserMessageStore(data_dir)
         self.group_msg_store = GroupMessageStore(data_dir)
@@ -418,9 +418,10 @@ class Main(Star):
         if self._critique_state is not None:
             req.system_prompt += self._build_critique_prompt()
 
-        if self._imitation_state is not None:
-            tname = self._imitation_state["target_name"]
-            style = self._imitation_state["style_desc"]
+        session_imitation = self._imitation_state.get(session_id)
+        if session_imitation:
+            tname = session_imitation["target_name"]
+            style = session_imitation["style_desc"]
             req.system_prompt += (
                 f"\n【当前任务】你现在在模仿「{tname}」的说话风格。"
                 f"你仍然是琪露诺，有琪露诺的记忆和性格，但你说话的方式、语气、用词习惯要尽量像{tname}。"
@@ -652,14 +653,19 @@ class Main(Star):
         affinity_factor = 0.3 + 0.7 * (composite / 100.0)  # 0.3~1.0
         chance = mood_factor * affinity_factor * 0.12
         if random.random() < chance:
-            state = self._start_prank(sender_id)
+            imitate_style = ""
+            records = self.user_msg_store.get_recent(sender_id, limit=30)
+            if len(records) >= 30:
+                lines = [r["msg"] for r in records if r.get("msg", "").strip()]
+                imitate_style = "；".join(lines[:10])
+            state = self._start_prank(sender_id, imitate_style=imitate_style)
             turns_left = state.get("turns_left")
             duration_info = f"{turns_left}轮" if turns_left is not None else f"{int(state['expires_at'] - time.time()) // 60}min"
             logger.info(
                 f"[琪露诺恶作剧] 进入恶作剧模式! "
                 f"valence={valence:.2f} composite={composite:.0f} "
                 f"chance={chance:.2%} duration={duration_info} "
-                f"pool={state['behavior_pool']}"
+                f"pool={state['behavior_pool']} imitate={'有' if imitate_style else '无'}"
             )
 
     PRANK_BEHAVIORS = [
@@ -671,29 +677,26 @@ class Main(Star):
         "揪住{name}说的话里某个具体的词或细节，反复追问那一个点，不管对方怎么回答都往那个细节上转。越问越细、越问越偏，像是真的对那个细节着了迷，完全不在意对方想说的重点是什么",
         "疯狂附和对方说的话，同意程度极其夸张，好像对方说了什么惊天大道理",
         "假装完全听不懂对方说的话，对非常正常的句子一直追问「什么意思」，对方越解释越装傻",
+        "__imitate__",  # 模仿发言者，由代码动态替换
     ]
 
-    def _start_prank(self, triggered_by: str) -> dict:
-        used = random.sample(range(len(self.PRANK_BEHAVIORS)), min(4, len(self.PRANK_BEHAVIORS)))
+    def _start_prank(self, triggered_by: str, imitate_style: str = "") -> dict:
+        imitate_idx = next((i for i, b in enumerate(self.PRANK_BEHAVIORS) if b == "__imitate__"), None)
+        eligible = list(range(len(self.PRANK_BEHAVIORS)))
+        if imitate_idx is not None and not imitate_style:
+            eligible.remove(imitate_idx)
+        used = random.sample(eligible, min(4, len(eligible)))
+        base = {
+            "triggered_by": triggered_by,
+            "behavior_pool": used,
+            "escalation": 0,
+            "ending": False,
+            "imitate_style": imitate_style,
+        }
         if self._prank_duration_turns > 0:
-            self._prank_state = {
-                "turns_left": self._prank_duration_turns,
-                "expires_at": None,
-                "triggered_by": triggered_by,
-                "behavior_pool": used,
-                "escalation": 0,
-                "ending": False,
-            }
+            self._prank_state = {**base, "turns_left": self._prank_duration_turns, "expires_at": None}
         else:
-            duration = random.randint(10, 20) * 60
-            self._prank_state = {
-                "turns_left": None,
-                "expires_at": time.time() + duration,
-                "triggered_by": triggered_by,
-                "behavior_pool": used,
-                "escalation": 0,
-                "ending": False,
-            }
+            self._prank_state = {**base, "turns_left": None, "expires_at": time.time() + random.randint(10, 20) * 60}
         return self._prank_state
 
     def _build_prank_prompt(self, sender_id: str, sender_name: str) -> str:
@@ -704,7 +707,19 @@ class Main(Star):
             )
         pool = self._prank_state.get("behavior_pool", [0])
         idx = random.choice(pool)
-        behavior = self.PRANK_BEHAVIORS[idx % len(self.PRANK_BEHAVIORS)].format(name=sender_name)
+        raw = self.PRANK_BEHAVIORS[idx % len(self.PRANK_BEHAVIORS)]
+
+        if raw == "__imitate__":
+            style = self._prank_state.get("imitate_style", "")
+            if style:
+                behavior = f"突然开始完全模仿{sender_name}的说话风格来回复——包括他的语气词、句式、用词习惯，越像越好，但内容还是你琪露诺的想法。风格参考：{style[:100]}"
+            else:
+                pool_no_imitate = [i for i in pool if self.PRANK_BEHAVIORS[i % len(self.PRANK_BEHAVIORS)] != "__imitate__"]
+                idx = random.choice(pool_no_imitate) if pool_no_imitate else 0
+                raw = self.PRANK_BEHAVIORS[idx % len(self.PRANK_BEHAVIORS)]
+                behavior = raw.format(name=sender_name)
+        else:
+            behavior = raw.format(name=sender_name)
         escalation = self._prank_state.get("escalation", 0)
         escalation_hint = ""
         if escalation >= 2:
@@ -1745,7 +1760,8 @@ class Main(Star):
 
         style_desc = await self._build_style_description(uid or target, name, profile)
 
-        self._imitation_state = {
+        sid = event.unified_msg_origin
+        self._imitation_state[sid] = {
             "target_name": name,
             "style_desc": style_desc,
         }
@@ -1756,11 +1772,12 @@ class Main(Star):
 
     @filter.command("琪露诺停止模仿")
     async def stop_imitation(self, event: AstrMessageEvent):
-        if self._imitation_state is None:
+        sid = event.unified_msg_origin
+        state = self._imitation_state.pop(sid, None)
+        if not state:
             yield event.plain_result("我现在没有在模仿任何人啊！")
             return
-        name = self._imitation_state["target_name"]
-        self._imitation_state = None
+        name = state["target_name"]
         logger.info(f"[琪露诺模仿] 停止模仿 {name}")
         yield event.plain_result(f"好啦，我不学{name}说话了，恢复成最强的我！")
 
