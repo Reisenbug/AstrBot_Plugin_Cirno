@@ -490,6 +490,8 @@ class Main(Star):
         bot_reply = re.sub(r"[（(][^）)]*[）)]", "", bot_reply).strip()
         bot_reply = re.sub(r"\*[^*]+\*", "", bot_reply).strip()
         bot_reply = re.sub(r"\n{2,}", "\n", bot_reply)
+        # 清除不完整的 <inner> 标签（缺少结束标签时正则无法匹配）
+        bot_reply = re.sub(r"<inner>.*", "", bot_reply, flags=re.DOTALL).strip()
         if bot_reply != (resp.completion_text or ""):
             resp.completion_text = bot_reply
 
