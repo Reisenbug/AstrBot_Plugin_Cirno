@@ -438,8 +438,15 @@ class Main(Star):
                 )
                 req.system_prompt += f"\n【群里的说法】\n{slang_lines}"
         if self._global_notes:
-            notes_text = "\n".join(f"- {n}" for n in self._global_notes)
-            req.system_prompt += f"\n【你特意记下来的事】\n{notes_text}"
+            from .recall_memory import extract_keywords
+            query_kw = set(extract_keywords(user_msg_text))
+            if query_kw:
+                matched = [n for n in self._global_notes if query_kw & set(extract_keywords(n))][:3]
+            else:
+                matched = []
+            if matched:
+                notes_text = "\n".join(f"- {n}" for n in matched)
+                req.system_prompt += f"\n【你特意记下来的事】\n{notes_text}"
         if self._recent_bot_replies:
             recent_lines = []
             for r in self._recent_bot_replies:
