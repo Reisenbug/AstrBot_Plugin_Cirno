@@ -487,7 +487,7 @@ class Main(Star):
         user_msg = event.message_str or ""
         bot_reply = resp.completion_text or ""
 
-        bot_reply = re.sub(r"[（(][^）)]*[）)]", "", bot_reply).strip()
+        bot_reply = re.sub(r"[（(][^）)]*[）)]", "", bot_reply, flags=re.DOTALL).strip()
         bot_reply = re.sub(r"\*[^*]+\*", "", bot_reply).strip()
         bot_reply = re.sub(r"\n{2,}", "\n", bot_reply)
         # 清除不完整的 <inner> 标签（缺少结束标签时正则无法匹配）
