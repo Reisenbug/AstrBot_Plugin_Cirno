@@ -488,6 +488,7 @@ class Main(Star):
 
         bot_reply = re.sub(r"[（(][^）)]*[）)]", "", bot_reply).strip()
         bot_reply = re.sub(r"\*[^*]+\*", "", bot_reply).strip()
+        bot_reply = re.sub(r"\n{2,}", "\n", bot_reply)
         if bot_reply != (resp.completion_text or ""):
             resp.completion_text = bot_reply
 
