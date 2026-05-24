@@ -157,9 +157,22 @@ class CirnoStateManager:
         logger.info(f"[琪露诺主动发言] 状态={state['label']}，话题：{topic}")
         return topic
 
+    _CATEGORY_STYLE = {
+        "lake": "说话比较放松随意。",
+        "adventure": "句子短、感叹号多、容易兴奋、节奏快。",
+        "social": "话相对多一点、爱接话、问句多。",
+        "daily": "日常口吻、不夸张、不刻意。",
+        "school": "带点偷懒、抱怨的小学生口吻。",
+        "rare": "语气带点好奇、惊讶或神神叨叨。",
+        "rest": "句子拉长、爱用省略号、容易跑题、不想长篇大论。",
+    }
+
     def get_prompt_injection(self) -> str:
         state = CIRNO_STATES[self.current_state]
         text = f"【当前状态：{state['label']}】{state['prompt_inject']}"
+        style = self._CATEGORY_STYLE.get(state.get("category", ""), "")
+        if style:
+            text += f"\n这种状态下你的说话特点：{style}"
 
         if self.enable_season:
             season = _get_season()

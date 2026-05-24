@@ -338,7 +338,7 @@ CIRNO_STATES = {
             "偶尔会突然冒出一句和话题完全无关的想法。"
         ),
         "active_hours": (0, 7),
-        "weight": 50,
+        "weight": 15,
         "proactive_topics": [],
     },
     "resting_late": {
