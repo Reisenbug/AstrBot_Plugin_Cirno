@@ -114,6 +114,8 @@ class Main(Star):
         self._enable_qzone_post = profile_cfg.get("enable_qzone_post", False)
         self._qzone_last_post_ts: float = 0.0
         self._cached_bot = None
+        self._cached_weather: str = ""
+        self._weather_last_fetch: float = 0.0
         self._poke_streaks: dict[str, dict] = {}
         self._private_last_user_msg: dict[str, float] = {}
         self._private_followup_tasks: dict[str, asyncio.Task] = {}
@@ -1168,7 +1170,27 @@ class Main(Star):
         self.group_msg_store.cleanup_old(keep_days=3)
         logger.info(f"[琪露诺每日画像] 完成，更新 {updated}/{len(user_ids)} 名用户")
 
+    async def _fetch_weather(self):
+        if time.time() - self._weather_last_fetch < 1800:
+            return
+        import aiohttp
+        try:
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get("https://wttr.in/Minhang?format=j1", timeout=10) as r:
+                    if r.status != 200:
+                        return
+                    data = await r.json()
+                    current = data.get("current_condition", [{}])[0]
+                    temp = current.get("temp_C", "")
+                    desc = current.get("lang_zh", [{}])[0].get("value", "") or current.get("weatherDesc", [{}])[0].get("value", "")
+                    self._cached_weather = f"{temp}度，{desc}"
+                    self._weather_last_fetch = time.time()
+                    logger.info(f"[天气] 已更新: {self._cached_weather}")
+        except Exception as e:
+            logger.debug(f"[天气] 获取失败: {e}")
+
     async def _proactive_check(self):
+        await self._fetch_weather()
         self.state_manager.maybe_transition()
         topic = self.state_manager.should_speak_proactively()
         if topic:
@@ -1424,14 +1446,33 @@ class Main(Star):
         state = self.state_manager.current_state
         from .cirno_states import CIRNO_STATES
         state_topics = CIRNO_STATES.get(state, {}).get("proactive_topics", [])
+        state_label = CIRNO_STATES.get(state, {}).get("label", "")
         topic = random.choice(state_topics) if state_topics else ""
 
-        if profile:
-            rel = profile.get("relationship", "")
-            events = profile.get("important_events", [])
-            event_hint = f"你记得和他之间发生过：{events[-1]}" if events else ""
+        hour = datetime.now().hour
+        rel = profile.get("relationship", "") if profile else ""
+        events_raw = profile.get("important_events", []) if profile else []
+        last_event = ""
+        if events_raw:
+            e = events_raw[-1]
+            last_event = e.get("text", "") if isinstance(e, dict) else str(e)
+
+        # 凌晨/早晨：梦境开场
+        if 0 <= hour < 7:
+            mode = random.choice(["dream", "share", "weather"])
+        else:
+            mode = random.choice(["share", "share", "weather", "topic"])  # share 权重更高
+
+        if mode == "dream":
+            return f"你刚做了个奇怪的梦，梦里出现了这个人，醒来后还有点恍惚，想找他说说。{rel}"
+        elif mode == "share":
+            return f"你正在「{state_label}」，刚刚发生了一件小事，突然想起这个人。想分享一下，但又不想显得太刻意。{('你对这个人的感觉：'+rel) if rel else ''}"
+        elif mode == "weather":
+            weather_hint = self._cached_weather or "今天天气还行"
+            return f"刚才感受了一下外面的天气——{weather_hint}。想找这个人聊聊。{rel}"
+        else:
+            event_hint = f"你记得和他之间发生过：{last_event}" if last_event else ""
             return f"{rel}。{event_hint}。{topic}".strip("。")
-        return topic or "你突然想起这个人，想找他说说话"
 
     async def _send_proactive_to_private(self, session_str: str, user_id: str, motivation: str):
         try:
