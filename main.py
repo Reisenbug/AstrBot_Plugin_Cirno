@@ -355,6 +355,16 @@ class Main(Star):
 
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_status_prompt(sender_id)
+            composite = self.affinity.get_composite(sender_id)
+            if composite >= 76:
+                ud = self.affinity.get_user_data(sender_id)
+                idle_hours = (time.time() - ud.get("last_ts", time.time())) / 3600
+                if idle_hours >= 12:
+                    hint = "心里其实有点想这个人，虽然嘴上不会说" if idle_hours < 48 else "好久没见到这个人了，心里有种说不出的复杂感觉"
+                    req.system_prompt += f"\n【久别】已经{int(idle_hours)}小时没和这个人说话了，{hint}。"
+                warmth = self.affinity.get_warmth(sender_id)
+                if warmth is not None and warmth < 0.4:
+                    req.system_prompt += "\n【察觉】最近几次互动你感觉对方状态不太对劲，可以主动关心一下，不需要等对方开口——但用琪露诺的方式，别太直接。"
 
         # 4. 相关的人
         if self._enable_core_memory:
