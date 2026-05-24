@@ -1218,8 +1218,8 @@ class Main(Star):
             if time.time() - last_user_ts < 290:
                 return
 
-            # 10% 概率追问
-            if random.random() > 0.10:
+            # 30% 概率追问
+            if random.random() > 0.30:
                 return
 
             followup = await self._generate_private_followup(
