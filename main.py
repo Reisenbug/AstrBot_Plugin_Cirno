@@ -1207,6 +1207,8 @@ class Main(Star):
         if self._enable_qzone_post and self._cached_bot:
             await self._maybe_post_qzone()
 
+    _FAREWELL_KEYWORDS = ("晚安", "睡了", "睡觉", "再见", "拜拜", "拜了", "先这样", "明天见", "回见", "下次聊", "去忙", "byebye", "bye", "88", "撤了", "闪了", "下播")
+
     async def _private_followup_flow(
         self, user_id: str, user_name: str, last_bot_reply: str, session_str: str
     ):
@@ -1218,12 +1220,15 @@ class Main(Star):
             if time.time() - last_user_ts < 290:
                 return
 
+            reply_lower = last_bot_reply.lower()
+            is_farewell = any(kw in reply_lower for kw in self._FAREWELL_KEYWORDS)
+
             # 30% 概率追问
             if random.random() > 0.30:
                 return
 
             followup = await self._generate_private_followup(
-                user_id, user_name, last_bot_reply, stage=1
+                user_id, user_name, last_bot_reply, stage=1, is_farewell=is_farewell
             )
             if followup:
                 try:
@@ -1242,7 +1247,7 @@ class Main(Star):
 
             # 用户不在线，自言自语
             monologue = await self._generate_private_followup(
-                user_id, user_name, last_bot_reply, stage=2
+                user_id, user_name, last_bot_reply, stage=2, is_farewell=is_farewell
             )
             if monologue:
                 try:
@@ -1258,7 +1263,8 @@ class Main(Star):
             logger.error(f"[私聊跟进] flow 异常: {e}")
 
     async def _generate_private_followup(
-        self, user_id: str, user_name: str, last_bot_reply: str, stage: int
+        self, user_id: str, user_name: str, last_bot_reply: str, stage: int,
+        is_farewell: bool = False,
     ) -> str:
         try:
             provider_id = self.context.get_all_providers()[0].meta().id
@@ -1271,24 +1277,28 @@ class Main(Star):
         is_close = level in ("喜欢", "很喜欢")
 
         if stage == 1:
-            if is_close:
+            if is_farewell:
+                tone = "对方已经说要走/睡了，你也知道对方不会立刻回。不要问「在吗」「不敢接话」这类期待回应的话，而是补一句温柔的祝愿或嘴硬的告别，自言自语的感觉"
+            elif is_close:
                 tone = "你有点在意对方没有回应，用随意的口气追一句，像是顺口问问，不要显得很在乎"
             else:
                 tone = "对方没有回应，你随口追一句，语气平淡"
             prompt = (
                 f"你刚才说了：「{last_bot_reply[:60]}」\n"
                 f"{sender_prompt}{affinity_prompt}\n"
-                f"对方沉默了一会儿，{tone}。\n"
+                f"{tone}。\n"
                 "只说一句话，10字以内，自然随意。直接输出那句话。"
             )
         else:
-            if is_close:
+            if is_farewell:
+                tone = "对方早就说要离开了，你知道对方不在。自言自语一句，可以是没说出口的话，或者突然想起的小事，但不要再叫对方"
+            elif is_close:
                 tone = "你觉得对方大概不在了，心里有点失落，自顾自说一句，或者吐露一点真实感受"
             else:
                 tone = "你觉得对方不在线了，随便自言自语一句"
             prompt = (
                 f"{sender_prompt}{affinity_prompt}\n"
-                f"对方一直没有回应，你判断他应该不在了。{tone}。\n"
+                f"{tone}。\n"
                 "只说一句话，15字以内，不要问句。直接输出那句话。"
             )
 
