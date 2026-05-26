@@ -511,6 +511,14 @@ class Main(Star):
         bot_reply = re.sub(r"\n{2,}", "\n", bot_reply)
         # 清除不完整的 <inner> 标签（缺少结束标签时正则无法匹配）
         bot_reply = re.sub(r"<inner>.*", "", bot_reply, flags=re.DOTALL).strip()
+        # 检测 LaTeX / 代码块 / 跳出角色的助手腔，替换为拒绝
+        if re.search(r"\\\[|\\\(|\\frac|\\sum|\\lim|\\sqrt|```|\\begin\{", bot_reply):
+            logger.warning(f"[琪露诺] 检测到 LaTeX/代码输出，替换为拒绝: {bot_reply[:50]}")
+            bot_reply = random.choice([
+                "哼，那种麻烦的东西本天才才不屑做！",
+                "什么乱七八糟的符号啊！不懂！",
+                "你找错人啦，最强的我可不是用来算题的！",
+            ])
         if bot_reply != (resp.completion_text or ""):
             resp.completion_text = bot_reply
 
