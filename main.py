@@ -272,6 +272,16 @@ class Main(Star):
             return m.group(0)
         return re.sub(r"@([^(]+)\((\d+)\)", _repl, text)
 
+    def _spawn(self, coro, label: str):
+        async def _wrapped():
+            try:
+                await coro
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"[琪露诺后台任务异常] {label}: {e}", exc_info=True)
+        return asyncio.create_task(_wrapped())
+
     @filter.on_llm_request()
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         if (event.message_str or "").startswith("//"):
@@ -286,7 +296,7 @@ class Main(Star):
         if transitioned:
             await self.put_kv_data("state_data", self.state_manager.to_dict())
             if bot:
-                asyncio.create_task(self._sync_qq_status(bot))
+                self._spawn(self._sync_qq_status(bot), "sync_qq_status")
 
         if event.session.message_type == MessageType.GROUP_MESSAGE:
             umo = event.unified_msg_origin
@@ -571,11 +581,12 @@ class Main(Star):
             old_task = self._private_followup_tasks.pop(sender_id, None)
             if old_task and not old_task.done():
                 old_task.cancel()
-            task = asyncio.create_task(
+            task = self._spawn(
                 self._private_followup_flow(
                     sender_id, sender_name, bot_reply,
                     event.unified_msg_origin
-                )
+                ),
+                "private_followup_flow",
             )
             self._private_followup_tasks[sender_id] = task
 
@@ -593,21 +604,21 @@ class Main(Star):
             self._slang_msg_counter += 1
             if self._slang_msg_counter >= 75:
                 self._slang_msg_counter = 0
-                asyncio.create_task(self._slang_update())
+                self._spawn(self._slang_update(), "slang_update")
 
         if self._enable_core_memory and "记住" in bot_reply:
-            asyncio.create_task(self._extract_and_memorize(
+            self._spawn(self._extract_and_memorize(
                 sender_id, sender_name, user_msg, bot_reply
-            ))
+            ), "extract_and_memorize")
 
         if self._enable_core_memory and len(user_msg) > 15:
             cooldown = self._fact_writeback_cooldown
             last = self._fact_writeback_last.get(sender_id, 0)
             if cooldown <= 0 or time.time() - last >= cooldown:
                 self._fact_writeback_last[sender_id] = time.time()
-                asyncio.create_task(self._writeback_user_facts(
+                self._spawn(self._writeback_user_facts(
                     sender_id, sender_name, user_msg, bot_reply
-                ))
+                ), "writeback_user_facts")
 
         if self._enable_core_memory:
             is_known = self.core_memory.get_profile(sender_id) is not None
@@ -624,9 +635,9 @@ class Main(Star):
                         recent_summary = "\n".join(lines)
                     else:
                         recent_summary = f"{sender_name}说：「{user_msg}」\n琪露诺回答：「{bot_reply}」"
-                    asyncio.create_task(self.core_memory.update_profile_via_llm(
+                    self._spawn(self.core_memory.update_profile_via_llm(
                         sender_id, recent_summary, self.context, nickname=sender_name
-                    ))
+                    ), "update_profile_via_llm")
 
         if self._enable_meme:
             meme_path = self.meme_selector.select(bot_reply)
