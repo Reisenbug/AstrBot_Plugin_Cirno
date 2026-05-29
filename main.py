@@ -103,6 +103,8 @@ class Main(Star):
         self._critique_state: dict | None = None
         self._global_notes: list[str] = []
         self._recent_bot_replies: list[dict] = []
+        self._dirty: set[str] = set()
+        self._flush_task: asyncio.Task | None = None
         self.jargon_filter = JargonStatisticalFilter()
         self._fact_writeback_cooldown: int = memory_cfg.get("fact_writeback_cooldown", 120)
         self._fact_writeback_last: dict[str, float] = {}
@@ -228,6 +230,8 @@ class Main(Star):
             self._daily_profile_cron_id = daily_job.job_id
             logger.info("琪露诺每日用户画像 cron job 已注册，每日凌晨3点触发")
 
+        self._flush_task = self._spawn(self._flush_loop(), "flush_loop")
+
 
     _CATEGORY_QQ_STATUS = {
         "rest":      (10, 1016),  # 睡觉
@@ -281,6 +285,30 @@ class Main(Star):
             except Exception as e:
                 logger.error(f"[琪露诺后台任务异常] {label}: {e}", exc_info=True)
         return asyncio.create_task(_wrapped())
+
+    def mark_dirty(self, *names: str):
+        self._dirty.update(names)
+
+    async def _flush_dirty(self):
+        if not self._dirty:
+            return
+        dirty = self._dirty
+        self._dirty = set()
+        try:
+            if "affinity" in dirty:
+                await self.affinity.save()
+            if "recall" in dirty:
+                await self.recall_memory.save()
+            if "core" in dirty:
+                await self.core_memory.save()
+        except Exception as e:
+            self._dirty.update(dirty)
+            logger.error(f"[琪露诺落盘失败] {e}", exc_info=True)
+
+    async def _flush_loop(self):
+        while True:
+            await asyncio.sleep(30)
+            await self._flush_dirty()
 
     @filter.on_llm_request()
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
@@ -860,7 +888,7 @@ class Main(Star):
             )
             logger.info(f"[琪露诺关键事件] 写入核心记忆(importance={importance}): {result['memory']}")
 
-        await self.affinity.save()
+        self.mark_dirty("affinity")
 
     async def _extract_and_memorize(self, user_id: str, user_name: str, user_msg: str, bot_reply: str):
         try:
@@ -2071,6 +2099,8 @@ class Main(Star):
         yield event.plain_result(f"已删除: {removed}")
 
     async def terminate(self):
+        if self._flush_task and not self._flush_task.done():
+            self._flush_task.cancel()
         await self.put_kv_data("state_data", self.state_manager.to_dict())
         await self.put_kv_data("group_sessions", list(self._group_sessions))
         if self._enable_affinity:
