@@ -1697,18 +1697,8 @@ class Main(Star):
         if count == 3:
             self._poke_streaks[sender_id]["angry"] = True
 
-        # rest状态：固定回复
-        if cat == "rest":
-            rest_pool = [
-                "嗯？……我在想事情呢……别戳",
-                "吵什么啦……我在思考宇宙的奥秘……",
-                "唔……等一下……我刚才想到一个超厉害的点子……忘了",
-            ]
-            yield event.plain_result(random.choice(rest_pool))
-            return
-
         # 第1-3次：LLM动态生成
-        reply = await self._generate_poke_reply(sender_id, sender_name, count, level, is_liked, is_disliked)
+        reply = await self._generate_poke_reply(sender_id, sender_name, count, level, is_liked, is_disliked, is_rest=(cat == "rest"))
         yield event.plain_result(reply)
 
         poke_back_chance = 1.0 if count >= 3 else 0.2
@@ -1727,13 +1717,21 @@ class Main(Star):
 
     async def _generate_poke_reply(
         self, sender_id: str, sender_name: str,
-        count: int, level: str, is_liked: bool, is_disliked: bool
+        count: int, level: str, is_liked: bool, is_disliked: bool,
+        is_rest: bool = False,
     ) -> str:
-        fallback_pool = {
-            1: ["哼！", "……（抖了一下）", "冰棍要来了哦"],
-            2: ["又来？", "……还戳", "再戳把你冻住"],
-            3: ["烦死了", "不理你了", "……"],
-        }
+        if is_rest:
+            fallback_pool = {
+                1: ["嗯？……我在想事情呢……别戳", "唔……困……别闹", "……刚才想到个超厉害的点子……忘了"],
+                2: ["吵什么啦……我在思考宇宙的奥秘……", "唔……再戳我就睡过去了", "别戳啦……脑子转不动了"],
+                3: ["烦……不想动……", "唔……让我躺着……", "……（懒得理你）"],
+            }
+        else:
+            fallback_pool = {
+                1: ["哼！", "……（抖了一下）", "冰棍要来了哦", "嗯？谁啊", "突然戳我干什么"],
+                2: ["又来？", "……还戳", "再戳把你冻住", "你很闲哦", "戳上瘾了是不是"],
+                3: ["烦死了", "不理你了", "……", "真的会生气哦", "最后警告"],
+            }
         try:
             provider_id = self.context.get_all_providers()[0].meta().id
         except Exception:
@@ -1744,7 +1742,14 @@ class Main(Star):
         affinity_prompt = self.affinity.build_status_prompt(sender_id) if self._enable_affinity else ""
         warmth = self.affinity.get_warmth(sender_id) if self._enable_affinity else None
 
-        if count == 1:
+        if is_rest:
+            if count == 1:
+                situation = "你正在休息、发呆或快睡着，对方戳了你一下，你迷迷糊糊地有了反应。"
+            elif count == 2:
+                situation = "你困得不想动，对方又戳了你一下，你嫌烦但懒得发火。"
+            else:
+                situation = "你正想好好歇着，对方却一直戳，你又困又烦，只想让他停下。"
+        elif count == 1:
             situation = "对方刚刚戳了你一下，你刚回过神来。"
         elif count == 2:
             situation = "对方戳了你两下，不说话，就只是戳。你有点疑惑。"
@@ -1765,12 +1770,24 @@ class Main(Star):
 
         angles = [
             "假装没被戳到，自顾自说一句完全不相关的事",
-            "用冰系能力威胁对方，比如要把对方冻住",
             "傲娇地承认被戳到了，嘴硬但藏不住",
             "突然说一句莫名其妙的话，像是自己在想别的事",
             "反问对方在干什么，但不要说「干嘛」这个词",
             "假装受伤地抱怨，夸张地说被戳疼了",
+            "把这次戳当成对方在向你求助或搭话，热情地接过去",
+            "炫耀自己刚做了什么了不起的事，完全不在意被戳",
+            "误会对方的意图，往奇怪的方向理解这次戳",
+            "提一件你和对方之间或最近发生的具体小事",
+            "用冰系能力反击，但要具体、有画面感，别只说「冻住你」",
         ]
+        if is_rest:
+            angles = [
+                "迷迷糊糊地嘟囔一句，像是没完全睡醒",
+                "抱怨被打扰了休息，但语气软绵绵的",
+                "说一句刚才在梦里或发呆时想到的奇怪东西",
+                "懒洋洋地让对方别戳，不想动",
+                "假装没听见，自言自语一句不相关的话",
+            ]
         angle = random.choice(angles)
         prompt = (
             f"{situation}{warmth_hint}\n"
