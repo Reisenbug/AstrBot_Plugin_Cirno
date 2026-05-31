@@ -286,6 +286,29 @@ class Main(Star):
                 logger.error(f"[琪露诺后台任务异常] {label}: {e}", exc_info=True)
         return asyncio.create_task(_wrapped())
 
+    _IMG_BLOCK_RE = re.compile(r"\[Image:\s*(.*?)\](?=\s*(?:\n\S+?/\d|\Z|\n*$))", re.DOTALL)
+
+    @classmethod
+    def _compress_context_images(cls, text: str, keep: int = 24) -> str:
+        def _repl(m):
+            desc = m.group(1).strip().replace("\n", " ")
+            desc = re.sub(r"[*#`>\-]+", "", desc)
+            desc = re.sub(r"\s+", " ", desc).strip()
+            return f"[图片:{desc[:keep]}…]" if len(desc) > keep else f"[图片:{desc}]"
+        return cls._IMG_BLOCK_RE.sub(_repl, text)
+
+    def _shrink_context(self, req):
+        if not req.contexts:
+            return
+        for msg in req.contexts:
+            c = msg.get("content")
+            if isinstance(c, str) and "[Image:" in c:
+                msg["content"] = self._compress_context_images(c)
+            elif isinstance(c, list):
+                for item in c:
+                    if isinstance(item, dict) and item.get("type") == "text" and "[Image:" in item.get("text", ""):
+                        item["text"] = self._compress_context_images(item["text"])
+
     def mark_dirty(self, *names: str):
         self._dirty.update(names)
 
@@ -310,12 +333,24 @@ class Main(Star):
             await asyncio.sleep(30)
             await self._flush_dirty()
 
+    _ERROR_FALLBACKS = [
+        "哼，本天才刚才走神了，没听清你说啥，再说一遍！",
+        "唔……脑子突然冻住了，刚才你说什么来着？",
+        "啊——咱刚才在想别的事，没顾上你，再讲一次嘛！",
+        "诶？信号被雾之湖的雾挡住啦，再说一遍！",
+        "本天才正忙着结冰呢，等会儿再理你！",
+    ]
+
     @filter.on_llm_request()
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         if (event.message_str or "").startswith("//"):
             event.stop_event()
             return
         event.set_extra("cirno_llm_start", time.time())
+        event.set_extra(
+            "persona_custom_error_message",
+            random.choice(self._ERROR_FALLBACKS),
+        )
         bot = getattr(event, "bot", None)
         if bot:
             self._cached_bot = bot
