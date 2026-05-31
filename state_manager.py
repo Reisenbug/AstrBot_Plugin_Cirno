@@ -164,7 +164,7 @@ class CirnoStateManager:
         "daily": "日常口吻、不夸张、不刻意。",
         "school": "带点偷懒、抱怨的小学生口吻。",
         "rare": "语气带点好奇、惊讶或神神叨叨。",
-        "rest": "句子拉长、爱用省略号、容易跑题、不想长篇大论。",
+        "rest": "懒懒的、爱用省略号、容易走神跑题，但话还是不多。",
     }
 
     def get_prompt_injection(self) -> str:

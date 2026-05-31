@@ -467,6 +467,7 @@ class Main(Star):
                 "\n你不是被叫到的，是自己凑过来插嘴的。除非你判断对方是在说你，否则对方不是在和你说话。"
                 "好奇心优先——听到不懂的或有趣的细节就追问，不要评价话题有没有意义。"
                 "不要强行扯到冰雪或青蛙，也不要攻击或反驳对方，就是个凑热闹的妖精。"
+                "就一句话，插完就完，别长篇。"
             )
         elif is_private:
             level = self.affinity.get_level(sender_id) if self._enable_affinity else "普通"
@@ -479,6 +480,7 @@ class Main(Star):
             )
             if is_close:
                 private_prompt += "你不需要撑面子，说话更松弛，偶尔流露真实感受。"
+            private_prompt += "私聊里如果你忍不住要发挥那种又傻又笃定的劲儿，可以多说半句，不用憋着。"
             req.system_prompt += private_prompt
         _snap("场景上下文")
 
