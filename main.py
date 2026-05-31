@@ -383,8 +383,21 @@ class Main(Star):
                 return
             logger.info(f"[HeartFlow] 兴趣度={interest:.2f}，继续插嘴")
 
+        _pb: list[tuple[str, int]] = []
+        _plen = [len(req.system_prompt or "")]
+
+        def _snap(label: str):
+            now = len(req.system_prompt or "")
+            delta = now - _plen[0]
+            if delta:
+                _pb.append((label, delta))
+            _plen[0] = now
+
+        _snap("persona基底")
+
         # 2. 状态机
         req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
+        _snap("状态机")
 
         # 3. 对话者身份 + 好感度（放在一起，让 LLM 先建立对"这个人"的完整认知）
         if self._enable_core_memory:
@@ -392,6 +405,7 @@ class Main(Star):
             self.core_memory.record_interaction(sender_id)
         else:
             req.system_prompt += f"\n当前和你对话的人QQ号是{sender_id}，QQ昵称是「{sender_nickname}」。"
+        _snap("对话者身份")
 
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_status_prompt(sender_id)
@@ -405,6 +419,7 @@ class Main(Star):
                 warmth = self.affinity.get_warmth(sender_id)
                 if warmth is not None and warmth < 0.4:
                     req.system_prompt += "\n【察觉】最近几次互动你感觉对方状态不太对劲，可以主动关心一下，不需要等对方开口——但用琪露诺的方式，别太直接。"
+        _snap("好感度+久别察觉")
 
         # 4. 相关的人
         if self._enable_core_memory:
@@ -413,6 +428,7 @@ class Main(Star):
                 req.system_prompt += f"\n{people_prompt}"
         else:
             req.system_prompt += "\n你认识一些人，但现在记忆模糊。"
+        _snap("相关的人")
 
         # 5. 回忆
         has_recall = False
@@ -437,6 +453,7 @@ class Main(Star):
             req.system_prompt += f"\n{recall_prompt}"
         if has_recall:
             req.system_prompt += "\n如果以上记忆和当前话题有关，随口带一嘴，不要生硬复述。"
+        _snap("回忆检索")
 
         # 6. 场景上下文（随机插嘴 / 私聊 / 普通）
         if is_random_reply:
@@ -457,6 +474,7 @@ class Main(Star):
             if is_close:
                 private_prompt += "你不需要撑面子，说话更松弛，偶尔流露真实感受。"
             req.system_prompt += private_prompt
+        _snap("场景上下文")
 
         # 7. 当前特殊事件（戳一戳余怒）
         poke_info = self._poke_streaks.get(sender_id, {})
@@ -468,6 +486,7 @@ class Main(Star):
 
         if self._critique_state is not None:
             req.system_prompt += self._build_critique_prompt()
+        _snap("特殊事件(戳/恶作剧/锐评)")
 
         session_imitation = self._imitation_state.get(session_id)
         if session_imitation:
@@ -480,6 +499,7 @@ class Main(Star):
                 f"\n模仿时：保留琪露诺的思维方式和情感，但把表达方式换成{tname}的风格。"
                 f"不要在回复中说「我在模仿{tname}」，直接用那个风格说话。"
             )
+        _snap("模仿")
         if not is_private:
             slang_matches = self.slang_store.match(event.message_str or "")
             if slang_matches:
@@ -488,6 +508,7 @@ class Main(Star):
                     for e in slang_matches
                 )
                 req.system_prompt += f"\n【群里的说法】\n{slang_lines}"
+        _snap("群黑话")
         if self._global_notes:
             from .recall_memory import extract_keywords
             query_kw = set(extract_keywords(user_msg_text))
@@ -498,6 +519,7 @@ class Main(Star):
             if matched:
                 notes_text = "\n".join(f"- {n}" for n in matched)
                 req.system_prompt += f"\n【你特意记下来的事】\n{notes_text}"
+        _snap("特意记下的事")
         if self._recent_bot_replies:
             recent_lines = []
             for r in self._recent_bot_replies:
@@ -506,13 +528,23 @@ class Main(Star):
                 snippet = f"「{text[:30]}…」" if len(text) > 30 else f"「{text}」"
                 recent_lines.append(f"对{to}说过{snippet}")
             req.system_prompt += f"\n【你最近说过】{'、'.join(recent_lines)}——避免重复相同的开场白、句式和结尾。"
+        _snap("最近说过")
         req.system_prompt += ABSOLUTE_RULES
+        _snap("绝对规则")
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_rating_prompt()
+        _snap("评分指令")
+
+        total = len(req.system_prompt or "")
+        block_str = " | ".join(f"{lbl}:{n}" for lbl, n in _pb)
+        logger.info(f"[琪露诺Prompt体检] system_prompt 总长 {total} 字符 | {len(_pb)}块 | {block_str}")
         if self._enable_core_memory and req.prompt:
             req.prompt = self._replace_at_with_names(req.prompt)
 
-        parts = [f"=== SYSTEM PROMPT ===\n{req.system_prompt}"]
+        parts = [
+            f"=== 体检：总长 {total} 字符，{len(_pb)} 块 ===\n{block_str}",
+            f"\n=== SYSTEM PROMPT ===\n{req.system_prompt}",
+        ]
         if req.contexts:
             parts.append(f"\n=== CONTEXTS ({len(req.contexts)} turns) ===")
             for msg in req.contexts:
