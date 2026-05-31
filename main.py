@@ -286,28 +286,27 @@ class Main(Star):
                 logger.error(f"[琪露诺后台任务异常] {label}: {e}", exc_info=True)
         return asyncio.create_task(_wrapped())
 
-    _IMG_BLOCK_RE = re.compile(r"\[Image:\s*(.*?)\](?=\s*(?:\n\S+?/\d|\Z|\n*$))", re.DOTALL)
+    _IMG_BLOCK_RE = re.compile(r"\[Image:\s*.*?\]", re.DOTALL)
 
     @classmethod
-    def _compress_context_images(cls, text: str, keep: int = 24) -> str:
-        def _repl(m):
-            desc = m.group(1).strip().replace("\n", " ")
-            desc = re.sub(r"[*#`>\-]+", "", desc)
-            desc = re.sub(r"\s+", " ", desc).strip()
-            return f"[图片:{desc[:keep]}…]" if len(desc) > keep else f"[图片:{desc}]"
-        return cls._IMG_BLOCK_RE.sub(_repl, text)
+    def _fold_images(cls, text: str) -> str:
+        return cls._IMG_BLOCK_RE.sub("[图片]", text)
 
     def _shrink_context(self, req):
+        # 文本里的 [Image: 转述] 块全部折叠成 [图片]。
+        # 用户当前发给 bot 看的主图走 req.image_urls（真图），不在文本里，不受影响。
+        if getattr(req, "prompt", None) and "[Image:" in req.prompt:
+            req.prompt = self._fold_images(req.prompt)
         if not req.contexts:
             return
         for msg in req.contexts:
             c = msg.get("content")
             if isinstance(c, str) and "[Image:" in c:
-                msg["content"] = self._compress_context_images(c)
+                msg["content"] = self._fold_images(c)
             elif isinstance(c, list):
                 for item in c:
                     if isinstance(item, dict) and item.get("type") == "text" and "[Image:" in item.get("text", ""):
-                        item["text"] = self._compress_context_images(item["text"])
+                        item["text"] = self._fold_images(item["text"])
 
     def mark_dirty(self, *names: str):
         self._dirty.update(names)
@@ -351,6 +350,7 @@ class Main(Star):
             "persona_custom_error_message",
             random.choice(self._ERROR_FALLBACKS),
         )
+        self._shrink_context(req)
         bot = getattr(event, "bot", None)
         if bot:
             self._cached_bot = bot
