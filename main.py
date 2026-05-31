@@ -608,13 +608,19 @@ class Main(Star):
             if isinstance(c, list):
                 return sum(len(i.get("text", "")) for i in c if isinstance(i, dict) and i.get("type") == "text")
             return 0
-        ctx_turns = len(req.contexts) if req.contexts else 0
-        ctx_chars = sum(_msg_len(m.get("content")) for m in (req.contexts or []))
+        all_ctx = req.contexts or []
+        ctx_turns = len(all_ctx)
+        # 框架会在发送前把历史截断到 max_context_length（默认6轮=12条消息），
+        # 我们的钩子在截断之前，拿到的是全量历史。这里只统计「实际会发送」的尾部，
+        # 避免被未截断的全量历史误导。
+        send_window = 6 * 2
+        sent_ctx = all_ctx[-send_window:]
+        sent_chars = sum(_msg_len(m.get("content")) for m in sent_ctx)
         prompt_chars = len(req.prompt or "")
-        grand_total = total + ctx_chars + prompt_chars
+        grand_total = total + sent_chars + prompt_chars
         logger.info(
-            f"[琪露诺Prompt体检] system={total} + 历史={ctx_chars}({ctx_turns}轮) + 当前={prompt_chars} "
-            f"= 总计{grand_total}字符(约{grand_total*2//3}token) | system分块: {block_str}"
+            f"[琪露诺Prompt体检] system={total} + 实发历史={sent_chars}(尾{len(sent_ctx)}条/全{ctx_turns}条) + 当前={prompt_chars} "
+            f"= 实发约{grand_total}字符(约{grand_total*2//3}token) | system分块: {block_str}"
         )
         if self._enable_core_memory and req.prompt:
             req.prompt = self._replace_at_with_names(req.prompt)
