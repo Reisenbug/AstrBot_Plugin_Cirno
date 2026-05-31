@@ -558,6 +558,8 @@ class Main(Star):
                 "什么乱七八糟的符号啊！不懂！",
                 "你找错人啦，最强的我可不是用来算题的！",
             ])
+        if not bot_reply.strip():
+            bot_reply = random.choice(["哼。", "……怎么了？", "嗯？"])
         if bot_reply != (resp.completion_text or ""):
             resp.completion_text = bot_reply
 
@@ -566,6 +568,8 @@ class Main(Star):
         if self._enable_affinity and bot_reply:
             cleaned, valence_shift, reason, interaction_type = self.affinity.extract_inner(bot_reply)
             if cleaned != bot_reply:
+                if not cleaned.strip():
+                    cleaned = random.choice(["哼。", "……怎么了？", "嗯？"])
                 resp.completion_text = cleaned
                 bot_reply = cleaned
 
