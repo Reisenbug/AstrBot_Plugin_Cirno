@@ -601,7 +601,21 @@ class Main(Star):
 
         total = len(req.system_prompt or "")
         block_str = " | ".join(f"{lbl}:{n}" for lbl, n in _pb)
-        logger.info(f"[琪露诺Prompt体检] system_prompt 总长 {total} 字符 | {len(_pb)}块 | {block_str}")
+
+        def _msg_len(c):
+            if isinstance(c, str):
+                return len(c)
+            if isinstance(c, list):
+                return sum(len(i.get("text", "")) for i in c if isinstance(i, dict) and i.get("type") == "text")
+            return 0
+        ctx_turns = len(req.contexts) if req.contexts else 0
+        ctx_chars = sum(_msg_len(m.get("content")) for m in (req.contexts or []))
+        prompt_chars = len(req.prompt or "")
+        grand_total = total + ctx_chars + prompt_chars
+        logger.info(
+            f"[琪露诺Prompt体检] system={total} + 历史={ctx_chars}({ctx_turns}轮) + 当前={prompt_chars} "
+            f"= 总计{grand_total}字符(约{grand_total*2//3}token) | system分块: {block_str}"
+        )
         if self._enable_core_memory and req.prompt:
             req.prompt = self._replace_at_with_names(req.prompt)
 
