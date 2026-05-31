@@ -430,6 +430,12 @@ class Main(Star):
             req.system_prompt += "\n你认识一些人，但现在记忆模糊。"
         _snap("相关的人")
 
+        from .lore_characters import match_lore
+        lore_hits = match_lore(user_msg_text)
+        if lore_hits:
+            req.system_prompt += "\n【你认识的幻想乡的人】\n" + "\n".join(lore_hits)
+        _snap("幻想乡人物")
+
         # 5. 回忆
         has_recall = False
         recall_prompt = ""
