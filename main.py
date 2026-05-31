@@ -384,7 +384,7 @@ class Main(Star):
             logger.info(f"[HeartFlow] 兴趣度={interest:.2f}，继续插嘴")
 
         _pb: list[tuple[str, int]] = []
-        _plen = [len(req.system_prompt or "")]
+        _plen = [0]
 
         def _snap(label: str):
             now = len(req.system_prompt or "")
