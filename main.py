@@ -287,10 +287,20 @@ class Main(Star):
         return asyncio.create_task(_wrapped())
 
     _IMG_BLOCK_RE = re.compile(r"\[Image:\s*.*?\]", re.DOTALL)
+    _PAREN_RE = re.compile(r"[（(][^）)]*[）)]", re.DOTALL)
+    _STAR_RE = re.compile(r"\*[^*]+\*")
 
     @classmethod
     def _fold_images(cls, text: str) -> str:
         return cls._IMG_BLOCK_RE.sub("[图片]", text)
+
+    @classmethod
+    def _strip_roleplay(cls, text: str) -> str:
+        """删掉 bot 历史回复里的括号动作戏/星号动作，防止它在上下文里反向示范。"""
+        t = cls._PAREN_RE.sub("", text)
+        t = cls._STAR_RE.sub("", t)
+        t = re.sub(r"\n{2,}", "\n", t)
+        return re.sub(r"[ \t]+", " ", t).strip()
 
     def _shrink_context(self, req):
         # 文本里的 [Image: 转述] 块全部折叠成 [图片]。
@@ -300,13 +310,24 @@ class Main(Star):
         if not req.contexts:
             return
         for msg in req.contexts:
+            is_assistant = msg.get("role") == "assistant"
             c = msg.get("content")
-            if isinstance(c, str) and "[Image:" in c:
-                msg["content"] = self._fold_images(c)
+            if isinstance(c, str):
+                if "[Image:" in c:
+                    c = self._fold_images(c)
+                if is_assistant and ("（" in c or "(" in c or "*" in c):
+                    c = self._strip_roleplay(c)
+                msg["content"] = c
             elif isinstance(c, list):
                 for item in c:
-                    if isinstance(item, dict) and item.get("type") == "text" and "[Image:" in item.get("text", ""):
-                        item["text"] = self._fold_images(item["text"])
+                    if not (isinstance(item, dict) and item.get("type") == "text"):
+                        continue
+                    t = item.get("text", "")
+                    if "[Image:" in t:
+                        t = self._fold_images(t)
+                    if is_assistant and ("（" in t or "(" in t or "*" in t):
+                        t = self._strip_roleplay(t)
+                    item["text"] = t
 
     def mark_dirty(self, *names: str):
         self._dirty.update(names)
