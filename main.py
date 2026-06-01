@@ -351,6 +351,48 @@ class Main(Star):
             self._dirty.update(dirty)
             logger.error(f"[琪露诺落盘失败] {e}", exc_info=True)
 
+    _PRIVATE_REF_KEYWORDS = ("私聊", "私下", "私底下", "刚跟你说", "刚才跟你说", "之前跟你说",
+                             "我们私", "悄悄跟你", "单独跟你", "私信")
+
+    async def _fetch_private_history(self, event: AstrMessageEvent, sender_id: str, max_turns: int = 4) -> str:
+        """拉取该用户私聊会话的最近几轮原文，用于群里提到私聊时附加上下文。"""
+        try:
+            group_umo = event.unified_msg_origin
+            platform = group_umo.split(":", 1)[0]
+            private_umo = f"{platform}:FriendMessage:{sender_id}"
+            cm = self.context.conversation_manager
+            cid = await cm.get_curr_conversation_id(private_umo)
+            if not cid:
+                return ""
+            conv = await cm.get_conversation(private_umo, cid)
+            if not conv or not conv.history:
+                return ""
+            history = json.loads(conv.history)
+        except Exception as e:
+            logger.debug(f"[私聊历史] 拉取失败: {e}")
+            return ""
+
+        def _text(c):
+            if isinstance(c, str):
+                return c
+            if isinstance(c, list):
+                return " ".join(i.get("text", "") for i in c if isinstance(i, dict) and i.get("type") == "text")
+            return ""
+
+        lines = []
+        for m in history[-max_turns * 2:]:
+            role = m.get("role")
+            t = _text(m.get("content"))
+            t = re.sub(r"<inner>.*?</inner>", "", t, flags=re.DOTALL)
+            t = re.sub(r"<system_reminder>.*", "", t, flags=re.DOTALL)
+            t = re.sub(r"<Quoted Message>.*?</Quoted Message>", "", t, flags=re.DOTALL)
+            t = self._fold_images(t).strip()
+            if not t:
+                continue
+            who = "他" if role == "user" else "你"
+            lines.append(f"{who}：{t[:60]}")
+        return "\n".join(lines[-max_turns * 2:])
+
     async def _flush_loop(self):
         while True:
             await asyncio.sleep(30)
@@ -609,6 +651,17 @@ class Main(Star):
             private_prompt += "私聊里如果你忍不住要发挥那种又傻又笃定的劲儿，可以多说半句，不用憋着。"
             req.system_prompt += private_prompt
         _snap("场景上下文")
+
+        # 6b. 群里提到私聊时，附加该用户的私聊近况
+        if not is_private and any(kw in user_msg_text for kw in self._PRIVATE_REF_KEYWORDS):
+            priv_hist = await self._fetch_private_history(event, sender_id)
+            if priv_hist:
+                req.system_prompt += (
+                    f"\n【他私聊里跟你说过的近况】\n{priv_hist}"
+                    "\n他现在在群里提到了私聊的事，你记得这些，可以自然地接上，但别在群里把私聊的隐私抖出来。"
+                )
+                logger.info(f"[私聊历史] 群内附加 {sender_id} 的私聊近况")
+        _snap("私聊近况")
 
         # 7. 当前特殊事件（戳一戳余怒）
         poke_info = self._poke_streaks.get(sender_id, {})
