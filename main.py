@@ -361,16 +361,21 @@ class Main(Star):
         "本天才正忙着结冰呢，等会儿再理你！",
     ]
 
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def _arm_error_fallback(self, event: AstrMessageEvent):
+        # 最早期就设兜底错误消息，覆盖「读对话历史时 SQL 锁炸了」这种
+        # 早于 on_llm_request 的失败——那时 inject_prompt 还没机会执行。
+        event.set_extra(
+            "persona_custom_error_message",
+            random.choice(self._ERROR_FALLBACKS),
+        )
+
     @filter.on_llm_request()
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         if (event.message_str or "").startswith("//"):
             event.stop_event()
             return
         event.set_extra("cirno_llm_start", time.time())
-        event.set_extra(
-            "persona_custom_error_message",
-            random.choice(self._ERROR_FALLBACKS),
-        )
         self._shrink_context(req)
         bot = getattr(event, "bot", None)
         if bot:
