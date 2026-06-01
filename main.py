@@ -105,6 +105,8 @@ class Main(Star):
         self._recent_bot_replies: list[dict] = []
         self._dirty: set[str] = set()
         self._flush_task: asyncio.Task | None = None
+        self._diag_task: asyncio.Task | None = None
+        self._session_last_seen: dict[str, float] = {}  # umo -> 最后收到消息时间
         self.jargon_filter = JargonStatisticalFilter()
         self._fact_writeback_cooldown: int = memory_cfg.get("fact_writeback_cooldown", 120)
         self._fact_writeback_last: dict[str, float] = {}
@@ -231,6 +233,7 @@ class Main(Star):
             logger.info("琪露诺每日用户画像 cron job 已注册，每日凌晨3点触发")
 
         self._flush_task = self._spawn(self._flush_loop(), "flush_loop")
+        self._diag_task = self._spawn(self._diag_loop(), "diag_loop")
 
 
     _CATEGORY_QQ_STATUS = {
@@ -353,6 +356,66 @@ class Main(Star):
             await asyncio.sleep(30)
             await self._flush_dirty()
 
+    def _collect_diagnostics(self) -> str:
+        """采集事件循环+会话状态快照，用于定位群聊卡死。"""
+        import traceback as _tb
+        lines = []
+        now = time.time()
+        try:
+            tasks = [t for t in asyncio.all_tasks() if not t.done()]
+        except Exception as e:
+            return f"[诊断] 无法获取 task 列表: {e}"
+
+        # 按「当前卡在哪个函数」分组
+        buckets: dict[str, int] = {}
+        suspicious = []  # 卡在 OneBot / DB 的 task
+        for t in tasks:
+            where = "?"
+            try:
+                stack = t.get_stack(limit=1)
+                if stack:
+                    f = stack[0]
+                    where = f"{f.f_code.co_name}({f.f_code.co_filename.rsplit('/', 1)[-1]}:{f.f_lineno})"
+                    fname = f.f_code.co_filename
+                    if any(k in fname for k in ("aiocqhttp", "api_impl", "sqlalchemy", "aiosqlite")) \
+                       or f.f_code.co_name in ("call_action", "fetch", "_query", "text_chat"):
+                        suspicious.append(where)
+            except Exception:
+                pass
+            buckets[where] = buckets.get(where, 0) + 1
+
+        lines.append(f"[诊断] 时刻={time.strftime('%H:%M:%S')} 挂起task总数={len(tasks)}")
+        if suspicious:
+            lines.append(f"[诊断] ⚠️ 疑似卡在OneBot/DB的task {len(suspicious)}个: " + "; ".join(suspicious[:8]))
+        top = sorted(buckets.items(), key=lambda x: -x[1])[:8]
+        lines.append("[诊断] task分布(前8): " + " | ".join(f"{w}×{n}" for w, n in top))
+
+        # 各会话最后活动（按群/私聊分，找"很久没动"的群）
+        groups = [(umo, now - ts) for umo, ts in self._session_last_seen.items() if "GroupMessage" in umo]
+        privs = [(umo, now - ts) for umo, ts in self._session_last_seen.items() if "GroupMessage" not in umo]
+        groups.sort(key=lambda x: x[1])
+        if groups:
+            g_str = ", ".join(f"{u.split(':')[-1]}={int(d)}s前" for u, d in groups[:6])
+            lines.append(f"[诊断] 群最后活动({len(groups)}个): {g_str}")
+        if privs:
+            recent_priv = min(d for _, d in privs)
+            lines.append(f"[诊断] 私聊({len(privs)}个) 最近一条={int(recent_priv)}s前")
+        return "\n".join(lines)
+
+    async def _diag_loop(self):
+        import os
+        diag_path = os.path.join(
+            str(StarTools.get_data_dir("astrbot_plugin_cirno")), "stuck_diagnostics.log"
+        )
+        while True:
+            await asyncio.sleep(300)  # 每5分钟一次静默快照
+            try:
+                snap = self._collect_diagnostics()
+                with open(diag_path, "a", encoding="utf-8") as f:
+                    f.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n{snap}\n")
+            except Exception as e:
+                logger.debug(f"[诊断] 写快照失败: {e}")
+
     _ERROR_FALLBACKS = [
         "哼，本天才刚才走神了，没听清你说啥，再说一遍！",
         "唔……脑子突然冻住了，刚才你说什么来着？",
@@ -369,6 +432,8 @@ class Main(Star):
             "persona_custom_error_message",
             random.choice(self._ERROR_FALLBACKS),
         )
+        # 记录会话活动时间，供卡死诊断用
+        self._session_last_seen[event.unified_msg_origin] = time.time()
 
     @filter.on_llm_request()
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
@@ -1940,6 +2005,13 @@ class Main(Star):
             text, _, _, _ = self.affinity.extract_inner(text)
         return text
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("琪露诺诊断")
+    async def debug_stuck(self, event: AstrMessageEvent):
+        snap = self._collect_diagnostics()
+        logger.warning(f"[琪露诺诊断-手动]\n{snap}")
+        yield event.plain_result(snap)
+
     @filter.command("琪露诺状态")
     async def debug_state(self, event: AstrMessageEvent):
         info = self.state_manager.get_debug_info()
@@ -2243,6 +2315,8 @@ class Main(Star):
     async def terminate(self):
         if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
+        if self._diag_task and not self._diag_task.done():
+            self._diag_task.cancel()
         await self.put_kv_data("state_data", self.state_manager.to_dict())
         await self.put_kv_data("group_sessions", list(self._group_sessions))
         if self._enable_affinity:
