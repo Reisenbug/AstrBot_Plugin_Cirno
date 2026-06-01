@@ -663,6 +663,14 @@ class Main(Star):
                 logger.info(f"[私聊历史] 群内附加 {sender_id} 的私聊近况")
         _snap("私聊近况")
 
+        # 6c. 随机长度倾向，打破"上下文都长→继续长"的滚雪球惯性
+        _len_roll = random.random()
+        if _len_roll < 0.6:
+            req.system_prompt += "\n【这次】心情没那么多话，就一两句、干脆点，别展开。"
+        elif _len_roll < 0.75:
+            req.system_prompt += "\n【这次】兴致来了，可以多说几句、把想法尽兴地讲完。"
+        _snap("长度倾向")
+
         # 7. 当前特殊事件（戳一戳余怒）
         poke_info = self._poke_streaks.get(sender_id, {})
         if poke_info.get("angry") and time.time() - poke_info.get("last_ts", 0) < self._POKE_COOLDOWN * 2:
