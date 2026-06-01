@@ -787,6 +787,8 @@ class Main(Star):
         bot_reply = re.sub(r"[（(][^）)]*[）)]", "", bot_reply, flags=re.DOTALL).strip()
         bot_reply = re.sub(r"\*[^*]+\*", "", bot_reply).strip()
         bot_reply = re.sub(r"\n{2,}", "\n", bot_reply)
+        # 清除泄漏到正文的情绪/好感标签，如 [心情:-1,好感:-2]、【好感+2】
+        bot_reply = re.sub(r"[\[【][^\]】]*(?:心情|好感|情绪|valence|sentiment)[^\]】]*[\]】]", "", bot_reply).strip()
         # 清除不完整的 <inner> 标签（缺少结束标签时正则无法匹配）
         bot_reply = re.sub(r"<inner>.*", "", bot_reply, flags=re.DOTALL).strip()
         # 检测 LaTeX / 代码块 / 跳出角色的助手腔，替换为拒绝
