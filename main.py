@@ -472,6 +472,7 @@ class Main(Star):
             "persona_custom_error_message",
             random.choice(self._ERROR_FALLBACKS),
         )
+        logger.debug(f"[兜底] 已为 {event.unified_msg_origin} 设置错误兜底")
         # 记录会话活动时间，供卡死诊断用
         self._session_last_seen[event.unified_msg_origin] = time.time()
 
