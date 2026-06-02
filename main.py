@@ -15,7 +15,6 @@ from astrbot.core.platform.message_type import MessageType
 
 from .affinity import AffinityManager
 from .core_memory import CoreMemory
-from .heart_flow import HeartFlow
 from .jargon_filter import JargonStatisticalFilter
 from .meme_sender import MemeSelector
 from .recall_memory import RecallMemory
@@ -110,7 +109,6 @@ class Main(Star):
         self.jargon_filter = JargonStatisticalFilter()
         self._fact_writeback_cooldown: int = memory_cfg.get("fact_writeback_cooldown", 120)
         self._fact_writeback_last: dict[str, float] = {}
-        self.heart_flow = HeartFlow()
         profile_cfg = config.get("profile_settings", {})
         self._enable_nickname_sync = profile_cfg.get("enable_nickname_sync", False)
         self._enable_signature_sync = profile_cfg.get("enable_signature_sync", False)
@@ -535,21 +533,13 @@ class Main(Star):
         ).get("category", "")
         suppress_recall = current_category == "rest"
 
-        # 1. HeartFlow/TimingGate 门控（随机插嘴场景）
+        # 随机插嘴场景判断（是否插嘴的概率由 AstrBot 自带配置控制）
         is_random_reply = (
             not event.is_at_or_wake_command
             and event.session.message_type == MessageType.GROUP_MESSAGE
         )
         is_private = event.session.message_type != MessageType.GROUP_MESSAGE
         session_id = event.unified_msg_origin
-        if is_random_reply:
-            self.heart_flow.update(session_id, user_msg_text)
-            interest = self.heart_flow.get_interest(session_id)
-            if not self.heart_flow.should_engage(session_id, base_chance=1.0):
-                logger.info(f"[HeartFlow] 兴趣度={interest:.2f}，放弃随机插嘴")
-                event.stop_event()
-                return
-            logger.info(f"[HeartFlow] 兴趣度={interest:.2f}，继续插嘴")
 
         _pb: list[tuple[str, int]] = []
         _plen = [0]
@@ -854,7 +844,6 @@ class Main(Star):
         self._recent_bot_replies.append({"text": bot_reply[:80], "to": sender_name})
         if len(self._recent_bot_replies) > 5:
             self._recent_bot_replies.pop(0)
-        self.heart_flow.on_bot_reply(event.unified_msg_origin)
 
         is_private_chat = event.session.message_type != MessageType.GROUP_MESSAGE
         if is_private_chat and self._enable_private_proactive:
@@ -2114,9 +2103,6 @@ class Main(Star):
                 lines.append(f"恶作剧模式: 激活，剩余约 {remaining} 分钟")
         else:
             lines.append("恶作剧模式: 未激活")
-        session_id = event.unified_msg_origin
-        hf = self.heart_flow.get_debug(session_id)
-        lines.append(f"心流兴趣度: {hf['interest']:.3f}")
         yield event.plain_result("\n".join(lines))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
