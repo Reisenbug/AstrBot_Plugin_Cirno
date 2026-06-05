@@ -288,12 +288,17 @@ class Main(Star):
         return asyncio.create_task(_wrapped())
 
     _IMG_BLOCK_RE = re.compile(r"\[Image:\s*.*?\]", re.DOTALL)
+    _CAPTION_RE = re.compile(r"<image_caption>.*?</image_caption>", re.DOTALL)
+    _CAPTION_OPEN_RE = re.compile(r"<image_caption>.*", re.DOTALL)
     _PAREN_RE = re.compile(r"[（(][^）)]*[）)]", re.DOTALL)
     _STAR_RE = re.compile(r"\*[^*]+\*")
 
     @classmethod
     def _fold_images(cls, text: str) -> str:
-        return cls._IMG_BLOCK_RE.sub("[图片]", text)
+        text = cls._IMG_BLOCK_RE.sub("[图片]", text)
+        text = cls._CAPTION_RE.sub("[图片]", text)
+        text = cls._CAPTION_OPEN_RE.sub("[图片]", text)
+        return text
 
     @classmethod
     def _strip_roleplay(cls, text: str) -> str:
