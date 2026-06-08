@@ -2,3 +2,4 @@ __pycache__/
 local_config.py
 memes/
 last_prompt.txt
+.DS_Store
