@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import random
 import re
 import time
@@ -776,6 +777,11 @@ class Main(Star):
                     parts.append(f"[{role}] {''.join(text_parts)}")
         parts.append(f"\n=== PROMPT ===\n{req.prompt or ''}")
         self._last_full_prompt = "\n".join(parts)
+        try:
+            with open(os.path.join(os.path.dirname(__file__), "last_prompt.txt"), "w", encoding="utf-8") as f:
+                f.write(self._last_full_prompt)
+        except Exception:
+            pass
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
