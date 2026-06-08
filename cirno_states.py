@@ -361,7 +361,7 @@ CIRNO_STATES = {
 
 SEASON_MODIFIERS = {
     "summer": {
-        "extra_prompt": "现在是夏天，你热得很难受，力量只剩平时一半。你更容易烦躁。",
+        "extra_prompt": "现在是夏天，天热，你没什么精神，懒洋洋的。",
         # category 权重倍率：>1 更容易出现，<1 更不容易出现，0 完全屏蔽
         "category_weight_multiplier": {
             "daily": 2.0,    # 夏天更爱宅家
