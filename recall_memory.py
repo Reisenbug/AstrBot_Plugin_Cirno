@@ -21,6 +21,16 @@ def _init_jieba():
 
 _init_jieba()
 
+
+def _is_spam_name(name: str) -> bool:
+    """刷屏昵称：如「茶茶茶茶茶」「板板板板板」——去重后字符极少。"""
+    if not name:
+        return True
+    if len(name) >= 4 and len(set(name)) <= 2:
+        return True
+    return False
+
+
 STOP_WORDS = {
     "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一",
     "一个", "上", "也", "很", "到", "说", "要", "去", "你", "会", "着",
@@ -334,6 +344,18 @@ class RecallMemory:
             logger.info(f"回忆记忆：衰减 {decayed} 条，清理 {removed} 条")
             await self.save()
 
+    def _group_factor(
+        self, entry: dict, current_user_id: str | None, current_group_id: str | None
+    ) -> float:
+        """跨场景隔离：外群记忆降权，避免私聊/本群里翻出无关群的往事。
+        例外：记忆里含当前对话者时不降权（这个人确实参与过那段往事）。"""
+        entry_gid = entry.get("gid", "")
+        if not entry_gid or entry_gid == current_group_id:
+            return 1.0
+        if current_user_id and current_user_id in entry.get("users", []):
+            return 1.0
+        return 0.3
+
     def _score_entry_bm25(
         self, query_kw: list[str], entry: dict, corpus_avg_len: float,
         current_user_id: str | None, current_group_id: str | None, now: float
@@ -345,8 +367,7 @@ class RecallMemory:
         age_hours = (now - entry.get("ts", now)) / 3600
         time_decay = math.exp(-age_hours / (24 * 7))
         user_bonus = 0.2 if current_user_id and current_user_id in entry.get("users", []) else 0.0
-        entry_gid = entry.get("gid", "")
-        group_factor = 1.0 if (not entry_gid or not current_group_id or entry_gid == current_group_id) else 0.3
+        group_factor = self._group_factor(entry, current_user_id, current_group_id)
         return (bm25 * 0.7 + time_decay * 0.1 + user_bonus) * group_factor
 
     _DIVERSITY_PENALTY = [1.0, 0.5, 0.25]  # 同一用户第1/2/3+条的得分系数
@@ -455,8 +476,7 @@ class RecallMemory:
             age_hours = (now - entry.get("ts", now)) / 3600
             time_decay = math.exp(-age_hours / (24 * 7))
             user_bonus = 0.2 if current_user_id and current_user_id in entry.get("users", []) else 0.0
-            entry_gid = entry.get("gid", "")
-            group_factor = 1.0 if (not entry_gid or not current_group_id or entry_gid == current_group_id) else 0.3
+            group_factor = self._group_factor(entry, current_user_id, current_group_id)
             score = (cosine * 0.6 + time_decay * 0.2 + user_bonus * 0.2) * group_factor
             vec_scored.append((score, entry))
         vec_scored.sort(key=lambda x: x[0], reverse=True)
@@ -513,8 +533,17 @@ class RecallMemory:
                 time_hint = "之前"
             if uid_to_name:
                 users = m.get("users", [])
-                names = [uid_to_name[u] for u in users if u in uid_to_name]
-                who = f"（与{'、'.join(names)}相关）" if names else ""
+                names = [
+                    uid_to_name[u]
+                    for u in users
+                    if u in uid_to_name and not _is_spam_name(uid_to_name[u])
+                ]
+                if len(names) > 3:
+                    who = f"（和{'、'.join(names[:3])}等人相关）"
+                elif names:
+                    who = f"（与{'、'.join(names)}相关）"
+                else:
+                    who = ""
             else:
                 who = ""
             scene = ""
