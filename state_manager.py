@@ -174,7 +174,7 @@ class CirnoStateManager:
         if style:
             text += f"\n这种状态下你的说话特点：{style}"
 
-        if self.enable_season:
+        if self.enable_season and random.random() < 0.25:
             season = _get_season()
             modifier = SEASON_MODIFIERS.get(season)
             if modifier and modifier.get("extra_prompt"):
