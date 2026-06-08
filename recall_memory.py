@@ -22,15 +22,6 @@ def _init_jieba():
 _init_jieba()
 
 
-def _is_spam_name(name: str) -> bool:
-    """刷屏昵称：如「茶茶茶茶茶」「板板板板板」——去重后字符极少。"""
-    if not name:
-        return True
-    if len(name) >= 4 and len(set(name)) <= 2:
-        return True
-    return False
-
-
 STOP_WORDS = {
     "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一",
     "一个", "上", "也", "很", "到", "说", "要", "去", "你", "会", "着",
@@ -546,11 +537,7 @@ class RecallMemory:
                 time_hint = "之前"
             if uid_to_name:
                 users = m.get("users", [])
-                names = [
-                    uid_to_name[u]
-                    for u in users
-                    if u in uid_to_name and not _is_spam_name(uid_to_name[u])
-                ]
+                names = [uid_to_name[u] for u in users if u in uid_to_name]
                 if len(names) > 3:
                     who = f"（和{'、'.join(names[:3])}等人相关）"
                 elif names:
