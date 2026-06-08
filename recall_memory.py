@@ -67,6 +67,7 @@ COMPRESS_PROMPT = (
     "- 聊了某个独特的、有意义的话题\n\n"
     "如果值得记住，用第三人称描述，「琪露诺好像记得……」的口吻，2-3句话以内。\n"
     "不要记录食物口味、具体数字等琐碎细节。\n"
+    "【重要】多个人说话时，谁做的事就记在谁名下，用对话里出现的名字，绝不能张冠李戴或把名字搞混。\n"
     "直接输出记忆内容或 null，不加任何其他解释。\n\n"
     "原始对话：\n{conversations}"
 )
@@ -187,7 +188,12 @@ class RecallMemory:
                         for uid, name in users_in_batch.items()
                     ], return_exceptions=True)
                 asyncio.create_task(_run_key_events())
-            asyncio.create_task(self._compress(batch))
+            # 按会话(gid)分桶压缩，避免把不同群/私聊的人事糊成一段而张冠李戴
+            buckets: dict[str, list[dict]] = {}
+            for e in batch:
+                buckets.setdefault(e.get("gid", ""), []).append(e)
+            for sub_batch in buckets.values():
+                asyncio.create_task(self._compress(sub_batch))
 
     def _find_related_summaries(self, batch: list[dict]) -> list[str]:
         users = {e["uid"] for e in batch}
@@ -282,40 +288,47 @@ class RecallMemory:
             return
 
         batch = self._summaries[:L2_THRESHOLD]
-        texts = "\n".join(f"- {s['text']}" for s in batch)
-        prompt = (
-            "你是琪露诺的记忆管理器。下面是琪露诺的多段模糊记忆。\n"
-            "请将它们进一步浓缩为一段更概括的印象，2-3句话。\n"
-            "用「琪露诺依稀记得……」的口吻，保留最重要的人和事。\n"
-            "直接输出，不加前缀。\n\n"
-            f"记忆片段：\n{texts}"
-        )
-
-        try:
-            resp = await self._llm_generate(prompt)
-            if not resp or not resp.completion_text:
-                return
-        except Exception as e:
-            logger.error(f"回忆记忆 L2 压缩失败: {e}")
-            return
-
-        all_kw: list[str] = []
-        all_users: set[str] = set()
-        ts_min = batch[0].get("ts_start", batch[0]["ts"])
-        ts_max = batch[-1]["ts"]
+        # 按会话(gid)分组压缩，digest 继承 gid，避免跨群/私聊串味
+        by_gid: dict[str, list[dict]] = {}
         for s in batch:
-            all_kw.extend(s.get("kw", []))
-            all_users.update(s.get("users", []))
-        kw_unique = list(dict.fromkeys(all_kw))[:40]
+            by_gid.setdefault(s.get("gid", ""), []).append(s)
 
-        digest = {
-            "ts": ts_max,
-            "ts_start": ts_min,
-            "text": resp.completion_text.strip(),
-            "kw": kw_unique,
-            "users": list(all_users),
-        }
-        self._digests.append(digest)
+        for gid, group in by_gid.items():
+            texts = "\n".join(f"- {s['text']}" for s in group)
+            prompt = (
+                "你是琪露诺的记忆管理器。下面是琪露诺的多段模糊记忆。\n"
+                "请将它们进一步浓缩为一段更概括的印象，2-3句话。\n"
+                "用「琪露诺依稀记得……」的口吻，保留最重要的人和事。\n"
+                "【重要】不同的人要分开记，谁做的事就标谁，绝不能把一个人的事安到另一个人头上。\n"
+                "直接输出，不加前缀。\n\n"
+                f"记忆片段：\n{texts}"
+            )
+            try:
+                resp = await self._llm_generate(prompt)
+                if not resp or not resp.completion_text:
+                    continue
+            except Exception as e:
+                logger.error(f"回忆记忆 L2 压缩失败: {e}")
+                continue
+
+            all_kw: list[str] = []
+            all_users: set[str] = set()
+            ts_min = group[0].get("ts_start", group[0]["ts"])
+            ts_max = group[-1]["ts"]
+            for s in group:
+                all_kw.extend(s.get("kw", []))
+                all_users.update(s.get("users", []))
+            kw_unique = list(dict.fromkeys(all_kw))[:40]
+
+            self._digests.append({
+                "ts": ts_max,
+                "ts_start": ts_min,
+                "text": resp.completion_text.strip(),
+                "kw": kw_unique,
+                "users": list(all_users),
+                "gid": gid,
+            })
+
         self._summaries = self._summaries[L2_THRESHOLD:]
         logger.info(f"回忆记忆：L2 压缩完成，当前 L1={len(self._summaries)}, L2={len(self._digests)}")
 
