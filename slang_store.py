@@ -8,6 +8,12 @@ from .recall_memory import extract_keywords
 
 MAX_SLANG = 50
 
+# 硬黑名单：即便 LLM 漏判也不入库——口癖语气词（防 daze 投毒）、切词碎片
+_SLANG_BLOCKLIST = {
+    "da", "ze", "daze", "だぜ", "的说",
+    "这是", "咱才",
+}
+
 
 class SlangStore:
     def __init__(self, data_dir: str):
@@ -39,6 +45,8 @@ class SlangStore:
     def add(self, word: str, meaning: str, scene: str) -> bool:
         word = word.strip()
         if not word:
+            return False
+        if word.lower() in _SLANG_BLOCKLIST:
             return False
         if any(e["word"] == word for e in self._entries):
             return False
