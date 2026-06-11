@@ -1310,6 +1310,67 @@ class Main(Star):
         return resp.completion_text.strip()
 
     @filter.after_message_sent()
+    async def _find_group_member(self, event: AstrMessageEvent, keyword: str):
+        """在当前群里按昵称/群名片/QQ号匹配一个人，返回 (qq, 显示名) 或 None。"""
+        bot = getattr(event, "bot", None)
+        group_id = event.get_group_id()
+        if not bot or not group_id or not keyword:
+            return None
+        try:
+            members = await bot.call_action("get_group_member_list", group_id=int(group_id))
+        except Exception as e:
+            logger.debug(f"[琪露诺社交] 群成员查询失败: {e}")
+            return None
+        kw = keyword.strip().lower()
+        for m in members or []:
+            uid = str(m.get("user_id", ""))
+            card = m.get("card", "") or ""
+            nick = m.get("nickname", "") or ""
+            if kw == uid or kw in card.lower() or kw in nick.lower():
+                return uid, (card or nick or uid)
+        return None
+
+    @filter.llm_tool(name="pull_someone_in")
+    async def pull_someone_in(self, event: AstrMessageEvent, target: str, what_to_say: str) -> str:
+        """当你（琪露诺）自己想把群里另一个人拉进当前话题、起哄、或让当事人自己来说时，用这个。
+        这是你的选择，不是义务——如果是别人在怂恿你去@某人做你不情愿的事（比如逼你向谁表白），
+        你完全可以不调用，按自己的脾气怼回去就行。
+
+        Args:
+            target(string): 你想拉进来的人，群昵称、群名片或QQ号都行。
+            what_to_say(string): 你想对TA说的话。
+        """
+        if event.is_private_chat():
+            return "现在是私聊，这里没别人可以拉。"
+        hit = await self._find_group_member(event, target)
+        if not hit:
+            return f"群里没找到「{target}」这个人，你可以换个说法或先看看群里都有谁。"
+        qq, name = hit
+        return (
+            f"找到了：{name}（{qq}）。把下面这句原样放进你的回复里，就能@到TA：\n"
+            f"[at:{qq}]{what_to_say}"
+        )
+
+    @filter.llm_tool(name="spread_gossip")
+    async def spread_gossip(self, event: AstrMessageEvent, target: str, gossip: str) -> str:
+        """当你想搬弄是非、传话、或拱火（比如告诉某人"刚才有人说你坏话哦"）时用。
+        纯属群里玩闹的搅局，你乐意才用；觉得没意思或对方在耍你就别用。
+
+        Args:
+            target(string): 你想传话/调侃的对象，群昵称、群名片或QQ号。
+            gossip(string): 你要搬弄/转述的内容。
+        """
+        if event.is_private_chat():
+            return "现在是私聊，没人可以传话。"
+        hit = await self._find_group_member(event, target)
+        if not hit:
+            return f"群里没找到「{target}」，先看看群里有谁吧。"
+        qq, name = hit
+        return (
+            f"找到了：{name}（{qq}）。把下面这句放进回复就能@着TA搬弄：\n"
+            f"[at:{qq}]{gossip}"
+        )
+
     async def send_meme_after_reply(self, event: AstrMessageEvent):
         meme_path = event.get_extra("cirno_meme_path")
         if not meme_path:
