@@ -1309,7 +1309,6 @@ class Main(Star):
 
         return resp.completion_text.strip()
 
-    @filter.after_message_sent()
     async def _find_group_member(self, event: AstrMessageEvent, keyword: str):
         """在当前群里按昵称/群名片/QQ号匹配一个人，返回 (qq, 显示名) 或 None。"""
         bot = getattr(event, "bot", None)
@@ -1371,6 +1370,7 @@ class Main(Star):
             f"[at:{qq}]{gossip}"
         )
 
+    @filter.after_message_sent()
     async def send_meme_after_reply(self, event: AstrMessageEvent):
         meme_path = event.get_extra("cirno_meme_path")
         if not meme_path:
