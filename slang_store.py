@@ -8,10 +8,12 @@ from .recall_memory import extract_keywords
 
 MAX_SLANG = 50
 
-# 硬黑名单：即便 LLM 漏判也不入库——口癖语气词（防 daze 投毒）、切词碎片
+# 硬黑名单：即便 LLM 漏判也不入库——口癖语气词（防 daze 投毒）、切词碎片、
+# 琪露诺自己的冰招式（黑话库不该怂恿她用冰梗，否则句句冻人）
 _SLANG_BLOCKLIST = {
     "da", "ze", "daze", "だぜ", "的说",
     "这是", "咱才",
+    "冻住", "冰雕", "冻", "冰冻",
 }
 
 
