@@ -351,6 +351,8 @@ class Main(Star):
                 await self.recall_memory.save()
             if "core" in dirty:
                 await self.core_memory.save()
+            if "state" in dirty:
+                await self.put_kv_data("state_data", self.state_manager.to_dict())
         except Exception as e:
             self._dirty.update(dirty)
             logger.error(f"[琪露诺落盘失败] {e}", exc_info=True)
@@ -495,7 +497,7 @@ class Main(Star):
         self.state_manager.on_user_interaction()
         transitioned = self.state_manager.maybe_transition()
         if transitioned:
-            await self.put_kv_data("state_data", self.state_manager.to_dict())
+            self.mark_dirty("state")
             if bot:
                 self._spawn(self._sync_qq_status(bot), "sync_qq_status")
 
