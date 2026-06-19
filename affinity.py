@@ -368,75 +368,38 @@ class AffinityManager:
 
     def build_status_prompt(self, user_id: str) -> str:
         composite = self.get_composite(user_id)
-        level = self.get_level(user_id)
-        ud = self.get_user_data(user_id)
-        v = self._emotion["valence"]
-        a = self._emotion["arousal"]
         vuln = self._emotion["vulnerability"]
 
-        ud = self._safe_user_data(user_id)
-        familiarity = ud.get("familiarity", 0)
-
-        if composite >= 76:
-            if v < 0.4:
-                cross = "语气比平时硬，话少，不想解释——但不会无视对方，也不会说错的话。"
-            elif v >= 0.6 and a >= 0.6:
-                cross = "语气比平时软，会认真听对方说话，偶尔说出比平时更直接的话再假装没事。"
-            elif v >= 0.6:
-                cross = "比平时放松，话会多一点，不那么好胜。"
-            else:
-                cross = "嘴上还是会嘴硬，但会记住对方说的话，认真回应。"
-        elif composite >= 61:
-            if v < 0.4:
-                cross = "话少，不想多说，但不会冷漠或无视对方。"
-            elif v >= 0.6:
-                cross = "比平时随意，愿意多聊几句。"
-            else:
-                cross = "正常回应，不刻意表现亲近也不疏远。"
-        elif composite >= 46:
-            if v < 0.4:
-                cross = "回应简短，没精力特别热情，但不会故意冷淡。"
-            else:
-                cross = "随口聊聊，没有特别的态度。"
-        elif composite >= 31:
-            if familiarity < 0.1:
-                cross = "不太认识，随口应几句，带点好奇。"
-            else:
-                cross = "聊过几次但没什么特别印象，正常回应就好。"
-        elif composite >= 16:
-            if familiarity < 0.1:
-                cross = "不认识这个人，先看看对方说什么。"
-            else:
-                cross = "没留下好印象，不冷漠但也不主动热情。"
-        else:
-            if familiarity < 0.05:
-                cross = "完全陌生，带点观望的态度聊聊。"
-            else:
-                cross = "印象不太好，懒得费心，但不会主动找麻烦。"
+        # 关系“是什么样”由记忆系统（印象事件）表达，好感度不再生成关系叙事文本，
+        # 避免和记忆冲突（Tier 1b）。好感度只在背后驱动机制（久别提醒、阈值），
+        # 这里只输出与好感度无关的“当下即时情绪状态”。
+        parts = []
 
         if vuln > 0.6 and composite >= 61:
-            cross += "现在比平时更容易在意对方的反应，但不会主动表现出来。"
+            parts.append("现在比平时更容易在意对方的反应，但不会主动表现出来。")
 
         # warmth 优先于 drift；只有 warmth 中性时 drift 才生效
         warmth = self.get_warmth(user_id)
         drift = self._daily_user_drift(user_id)
         if warmth is not None and warmth < 0.4:
-            cross += "最近对方反应比较冷，说话时会更注意对方的态度。"
+            parts.append("最近对方反应比较冷，说话时会更注意对方的态度。")
         elif warmth is not None and warmth > 0.65:
-            cross += "最近互动顺畅，比平时放松一点。"
+            parts.append("最近互动顺畅，比平时放松一点。")
         elif warmth is None or 0.4 <= warmth <= 0.65:
             if drift < -25:
-                cross += "今天莫名对这个人少了点耐心。"
+                parts.append("今天莫名对这个人少了点耐心。")
             elif drift > 25:
-                cross += "今天莫名对这个人多了点好感。"
+                parts.append("今天莫名对这个人多了点好感。")
 
         boredom = self.get_boredom(user_id)
         if boredom >= 0.7:
-            cross += "聊了太久，开始有点不专注，想找机会结束。"
+            parts.append("聊了太久，开始有点不专注，想找机会结束。")
         elif boredom >= 0.4:
-            cross += "聊了一阵，注意力开始飘。"
+            parts.append("聊了一阵，注意力开始飘。")
 
-        return f"\n【你对当前对话者的感觉：{level}】{cross}"
+        if not parts:
+            return ""
+        return "\n【你此刻的状态】" + "".join(parts)
 
     def build_rating_prompt(self) -> str:
         return RATING_PROMPT
