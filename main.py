@@ -30,6 +30,12 @@ except ImportError:
     DEFAULT_USER_INFO = {}
     ABSOLUTE_RULES = ""
 
+try:
+    from .local_config import MASTER_ID, MASTER_PROMPT
+except ImportError:
+    MASTER_ID = ""
+    MASTER_PROMPT = ""
+
 
 class Main(Star):
     context: Context
@@ -572,6 +578,8 @@ class Main(Star):
             self.core_memory.record_interaction(sender_id)
         else:
             req.system_prompt += f"\n当前和你对话的人QQ号是{sender_id}，QQ昵称是「{sender_nickname}」。"
+        if MASTER_ID and str(sender_id) == MASTER_ID:
+            req.system_prompt += MASTER_PROMPT
         _snap("对话者身份")
 
         if self._enable_affinity:
