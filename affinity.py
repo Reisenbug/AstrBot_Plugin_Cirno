@@ -436,7 +436,7 @@ class AffinityManager:
         elif boredom >= 0.4:
             cross += "聊了一阵，注意力开始飘。"
 
-        return f"\n【对当前对话者：{level}（{composite:.0f}/100）】{cross}"
+        return f"\n【你对当前对话者的感觉：{level}】{cross}"
 
     def build_rating_prompt(self) -> str:
         return RATING_PROMPT

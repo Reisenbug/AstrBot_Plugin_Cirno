@@ -582,8 +582,12 @@ class Main(Star):
             req.system_prompt += MASTER_PROMPT
         _snap("对话者身份")
 
+        is_master = bool(MASTER_ID) and str(sender_id) == MASTER_ID
         if self._enable_affinity:
-            req.system_prompt += self.affinity.build_status_prompt(sender_id)
+            # 创造者已由 MASTER_PROMPT + 印象文本定义关系，跳过常规好感度档位文本，
+            # 避免"最特别的存在"与"冷淡42分没印象"在同一轮自相矛盾（关系叙事只留一套）。
+            if not is_master:
+                req.system_prompt += self.affinity.build_status_prompt(sender_id)
             composite = self.affinity.get_composite(sender_id)
             if composite >= 76:
                 ud = self.affinity.get_user_data(sender_id)
@@ -733,6 +737,9 @@ class Main(Star):
         _snap("最近说过")
         req.system_prompt += ABSOLUTE_RULES
         _snap("绝对规则")
+        # 正向身份重锚：放在生成点最近处，对抗长上下文里早期人格指令的注意力衰减。
+        req.system_prompt += "\n现在，就用琪露诺自己的语气、凭此刻的心情，说一句她会说的话。"
+        _snap("身份重锚")
         if self._enable_affinity:
             req.system_prompt += self.affinity.build_rating_prompt()
         _snap("评分指令")
