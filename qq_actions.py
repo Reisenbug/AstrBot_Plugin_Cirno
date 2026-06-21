@@ -10,7 +10,7 @@ from astrbot.api import logger
 
 async def list_my_groups(self, event) -> str:
     """返回琪露诺所在的群列表（群名 + 群号）。"""
-    bot = getattr(event, "bot", None)
+    bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
     if not bot:
         return "现在连不上QQ，看不到群。"
     try:
@@ -26,7 +26,7 @@ async def list_my_groups(self, event) -> str:
 
 async def _find_group(self, event, keyword: str):
     """按群名/群号在群列表里匹配一个群，返回 (group_id, group_name) 或 None。"""
-    bot = getattr(event, "bot", None)
+    bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
     if not bot or not keyword:
         return None
     try:
@@ -67,7 +67,7 @@ async def speak_in_group(self, event, group: str, words: str) -> str:
 
 async def poke(self, event, target: str) -> str:
     """戳一戳当前群里的某个人。"""
-    bot = getattr(event, "bot", None)
+    bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
     group_id = event.get_group_id()
     if not bot or not group_id:
         return "这儿没法戳人（不在群里）。"
