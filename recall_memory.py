@@ -164,6 +164,25 @@ class RecallMemory:
         await self._plugin.put_kv_data("recall_digests", self._digests)
         await self._plugin.put_kv_data("recall_global_count", self._global_count)
 
+    async def forget(self, keywords: list[str]) -> int:
+        """删除 L1/L2 里 text 含【全部】指定关键词的记忆条目。返回删除条数。
+        profile（核心人设）不在此处理，避免误删。"""
+        kws = [k.strip() for k in keywords if k.strip()]
+        if not kws:
+            return 0
+
+        def _hit(entry):
+            t = entry.get("text", "")
+            return all(k in t for k in kws)
+
+        before = len(self._summaries) + len(self._digests)
+        self._summaries = [e for e in self._summaries if not _hit(e)]
+        self._digests = [e for e in self._digests if not _hit(e)]
+        removed = before - len(self._summaries) - len(self._digests)
+        if removed:
+            await self.save()
+        return removed
+
     async def archive(self, user_id: str, user_name: str, user_msg: str, bot_reply: str, group_id: str | None = None):
         self._buffer.append({
             "ts": time.time(),

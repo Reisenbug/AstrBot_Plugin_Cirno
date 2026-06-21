@@ -1383,6 +1383,24 @@ class Main(Star):
             f"[at:{qq}]{gossip}"
         )
 
+    @filter.llm_tool(name="forget_memory")
+    async def forget_memory(self, event: AstrMessageEvent, keywords: str) -> str:
+        """当你想忘掉某段记忆时用——比如对方明确让你忘记某件事，或你自己想把某段不愉快/不想记的往事抹掉。
+        只忘你明确指定的内容，不要自己擅自判断哪些记忆是"假的"去删。
+
+        Args:
+            keywords(string): 要忘掉的事的关键词，多个词用空格分隔（词越具体越精准，比如"萤 牺牲"只删同时含这两个词的）。
+        """
+        if not self._enable_recall_memory:
+            return "记忆功能没开，没什么好忘的。"
+        kws = keywords.split()
+        if not kws:
+            return "你得告诉我要忘掉关于什么的事呀。"
+        removed = await self.recall_memory.forget(kws)
+        if removed:
+            return f"忘掉了 {removed} 条关于「{' '.join(kws)}」的记忆。就当从来没发生过吧。"
+        return f"翻了翻脑子，没找到关于「{' '.join(kws)}」的记忆，本来就不记得。"
+
     @filter.after_message_sent()
     async def send_meme_after_reply(self, event: AstrMessageEvent):
         meme_path = event.get_extra("cirno_meme_path")
