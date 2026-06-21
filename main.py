@@ -316,6 +316,23 @@ class Main(Star):
         t = re.sub(r"\n{2,}", "\n", t)
         return re.sub(r"[ \t]+", " ", t).strip()
 
+    _SENT_END_RE = re.compile(r"[。！？!?…\n]")
+    _HIST_REPLY_CAP = 120
+
+    @classmethod
+    def _cap_reply_len(cls, text: str) -> str:
+        """历史里 bot 自己的长回复按句子边界截短，防止它当成'我就该这么长'的范本，
+        引发上下文自我喂养、回复越滚越长。只动喂回模型的历史副本，不改已发出的内容。"""
+        if len(text) <= cls._HIST_REPLY_CAP:
+            return text
+        cut = text[: cls._HIST_REPLY_CAP]
+        m = None
+        for m in cls._SENT_END_RE.finditer(cut):
+            pass
+        if m and m.end() >= 20:
+            return cut[: m.end()].strip()
+        return cut.strip() + "…"
+
     def _shrink_context(self, req):
         # 文本里的 [Image: 转述] 块全部折叠成 [图片]。
         # 用户当前发给 bot 看的主图走 req.image_urls（真图），不在文本里，不受影响。
@@ -331,6 +348,8 @@ class Main(Star):
                     c = self._fold_images(c)
                 if is_assistant and ("（" in c or "(" in c or "*" in c):
                     c = self._strip_roleplay(c)
+                if is_assistant:
+                    c = self._cap_reply_len(c)
                 msg["content"] = c
             elif isinstance(c, list):
                 for item in c:
@@ -341,6 +360,8 @@ class Main(Star):
                         t = self._fold_images(t)
                     if is_assistant and ("（" in t or "(" in t or "*" in t):
                         t = self._strip_roleplay(t)
+                    if is_assistant:
+                        t = self._cap_reply_len(t)
                     item["text"] = t
 
     def mark_dirty(self, *names: str):
@@ -867,7 +888,7 @@ class Main(Star):
 
         self.user_msg_store.append(sender_id, sender_name, user_msg)
 
-        self._recent_bot_replies.append({"text": bot_reply[:80], "to": sender_name})
+        self._recent_bot_replies.append({"text": bot_reply[:30], "to": sender_name})
         if len(self._recent_bot_replies) > 5:
             self._recent_bot_replies.pop(0)
 
