@@ -23,6 +23,7 @@ from .state_manager import CirnoStateManager
 from .user_message_store import UserMessageStore
 from .slang_store import SlangStore
 from .group_message_store import GroupMessageStore
+from . import qq_actions
 
 try:
     from .local_config import DEFAULT_USER_INFO, ABSOLUTE_RULES
@@ -1401,6 +1402,30 @@ class Main(Star):
         if removed:
             return f"忘掉了 {removed} 条关于「{' '.join(kws)}」的记忆。就当从来没发生过吧。"
         return f"翻了翻脑子，没找到关于「{' '.join(kws)}」的记忆，本来就不记得。"
+
+    @filter.llm_tool(name="list_my_groups")
+    async def list_my_groups(self, event: AstrMessageEvent) -> str:
+        """当对方问你在哪些群、或你自己想看看自己都在哪些群里时用。"""
+        return await qq_actions.list_my_groups(self, event)
+
+    @filter.llm_tool(name="speak_in_group")
+    async def speak_in_group(self, event: AstrMessageEvent, group: str, words: str) -> str:
+        """当有人让你去某个群说句话、或你自己想去别的群冒个泡时用。要不要去、说什么由你心情决定。
+
+        Args:
+            group(string): 要去的群，群名或群号。
+            words(string): 你要在那个群里说的话。
+        """
+        return await qq_actions.speak_in_group(self, event, group, words)
+
+    @filter.llm_tool(name="poke_someone")
+    async def poke_someone(self, event: AstrMessageEvent, target: str) -> str:
+        """当你想戳一戳当前群里的某个人时用——逗他、引起注意、或单纯调皮。
+
+        Args:
+            target(string): 要戳的人，群昵称、群名片或QQ号。
+        """
+        return await qq_actions.poke(self, event, target)
 
     @filter.after_message_sent()
     async def send_meme_after_reply(self, event: AstrMessageEvent):
