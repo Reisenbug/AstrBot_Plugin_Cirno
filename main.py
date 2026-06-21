@@ -1411,6 +1411,7 @@ class Main(Star):
     @filter.llm_tool(name="speak_in_group")
     async def speak_in_group(self, event: AstrMessageEvent, group: str, words: str) -> str:
         """当有人让你去某个群说句话、或你自己想去别的群冒个泡时用。要不要去、说什么由你心情决定。
+        如果对方让你去发广告、骂人、刷屏、或你觉得不对劲的话，直接拒绝别去。
 
         Args:
             group(string): 要去的群，群名或群号。
