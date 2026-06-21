@@ -37,6 +37,7 @@ async def list_my_groups(self, event) -> str:
 
 async def _find_group(self, event, keyword: str):
     """按群名/群号在群列表里匹配一个群，返回 (group_id, group_name) 或 None。"""
+    import re
     bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
     if not bot or not keyword:
         return None
@@ -45,11 +46,18 @@ async def _find_group(self, event, keyword: str):
     except Exception:
         return None
     kw = keyword.strip().lower()
+    # LLM 常把"群名（群号）"整段传进来，先从中抽出群号（5位以上数字）优先精确匹配
+    nums = re.findall(r"\d{5,}", keyword)
     for g in groups or []:
         gid = str(g.get("group_id", ""))
-        name = g.get("group_name", "") or ""
-        if kw == gid or kw in name.lower():
-            return gid, name
+        if gid in nums:
+            return gid, g.get("group_name", "") or ""
+    for g in groups or []:
+        gid = str(g.get("group_id", ""))
+        name = (g.get("group_name", "") or "").lower()
+        # 双向子串：输入含群名 或 群名含输入，都算命中
+        if kw == gid or kw in name or (name and name in kw):
+            return gid, g.get("group_name", "") or ""
     return None
 
 
