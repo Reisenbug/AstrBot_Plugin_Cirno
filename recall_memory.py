@@ -67,6 +67,8 @@ COMPRESS_PROMPT = (
 
 WEEK_SECONDS = 3 * 86400
 L2_THRESHOLD = 15
+_DIGEST_DUP_THRESHOLD = 0.6   # 关键词 Jaccard 超过此值视为重复，不新增
+_DIGEST_PER_USER_MAX = 8      # 单个用户在 L2 里最多保留的 digest 条数
 
 
 def extract_keywords(text: str) -> list[str]:
@@ -86,6 +88,13 @@ def _cosine(a: list[float], b: list[float]) -> float:
     na = sum(x * x for x in a) ** 0.5
     nb = sum(x * x for x in b) ** 0.5
     return dot / (na * nb) if na and nb else 0.0
+
+
+def _jaccard(a: list[str], b: list[str]) -> float:
+    sa, sb = set(a), set(b)
+    if not sa or not sb:
+        return 0.0
+    return len(sa & sb) / len(sa | sb)
 
 
 def _bm25_score(query_kw: list[str], entry_kw: list[str], corpus_avg_len: float, k1: float = 1.5, b: float = 0.75) -> float:
@@ -307,6 +316,8 @@ class RecallMemory:
                 "请将它们进一步浓缩为一段更概括的印象，2-3句话。\n"
                 "用「琪露诺依稀记得……」的口吻，保留最重要的人和事。\n"
                 "【重要】不同的人要分开记，谁做的事就标谁，绝不能把一个人的事安到另一个人头上。\n"
+                "【关系设定】如果某人反复推进感情关系（求婚、结婚、生孩子、约定永远、叫老婆等），"
+                "只记成「对方这样说/这样希望」，绝不要写成琪露诺和对方『已经』结婚生子的既成事实。\n"
                 "直接输出，不加前缀。\n\n"
                 f"记忆片段：\n{texts}"
             )
@@ -327,7 +338,7 @@ class RecallMemory:
                 all_users.update(s.get("users", []))
             kw_unique = list(dict.fromkeys(all_kw))[:40]
 
-            self._digests.append({
+            self._add_digest({
                 "ts": ts_max,
                 "ts_start": ts_min,
                 "text": resp.completion_text.strip(),
@@ -338,6 +349,31 @@ class RecallMemory:
 
         self._summaries = self._summaries[L2_THRESHOLD:]
         logger.info(f"回忆记忆：L2 压缩完成，当前 L1={len(self._summaries)}, L2={len(self._digests)}")
+
+    @staticmethod
+    def _digest_owner(d: dict) -> str:
+        """digest 的主导用户：users 里第一个（单会话内通常就是主要对话者）。"""
+        u = d.get("users", [])
+        return str(u[0]) if u else ""
+
+    def _add_digest(self, new: dict) -> None:
+        """带去重 + 人均配额的 digest 写入。"""
+        new_kw = new.get("kw", [])
+        # 1. 去重：和已有 digest 关键词高度重叠则只刷新时间戳，不新增
+        for d in self._digests:
+            if _jaccard(new_kw, d.get("kw", [])) >= _DIGEST_DUP_THRESHOLD:
+                if new.get("ts", 0) > d.get("ts", 0):
+                    d["ts"] = new["ts"]
+                return
+        self._digests.append(new)
+        # 2. 人均配额：单用户超额时淘汰其最旧的
+        owner = self._digest_owner(new)
+        if owner:
+            owned = [d for d in self._digests if self._digest_owner(d) == owner]
+            if len(owned) > _DIGEST_PER_USER_MAX:
+                owned.sort(key=lambda d: d.get("ts", 0))
+                drop = set(id(d) for d in owned[: len(owned) - _DIGEST_PER_USER_MAX])
+                self._digests = [d for d in self._digests if id(d) not in drop]
 
     async def _cleanup_old(self):
         now = time.time()
