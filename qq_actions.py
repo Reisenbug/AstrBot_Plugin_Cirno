@@ -61,24 +61,9 @@ async def _find_group(self, event, keyword: str):
     return None
 
 
-_speak_cooldown: dict = {}  # sender_id -> 上次跨群说话时间戳
-
-
 async def speak_in_group(self, event, group: str, words: str) -> str:
-    """去指定群说话。申桐无限制；其他人有频率限制（防刷屏）。"""
-    import time
+    """去指定群说话（任何人都能让她去，说不说由人格决定）。"""
     event = _real_event(event)
-    try:
-        from .local_config import MASTER_ID
-    except ImportError:
-        MASTER_ID = ""
-    sender_id = str(event.get_sender_id())
-    # 申桐无限制；其他人 60 秒内只能让她跨群说一次
-    if not MASTER_ID or sender_id != MASTER_ID:
-        last = _speak_cooldown.get(sender_id, 0)
-        if time.time() - last < 60:
-            return "刚去别的群说过话啦，本天才才不当你的传话筒一直跑来跑去呢！"
-        _speak_cooldown[sender_id] = time.time()
     hit = await _find_group(self, event, group)
     if not hit:
         return f"我没找到「{group}」这个群，要么不在那群，要么名字记错了。"
@@ -138,23 +123,9 @@ async def _find_friend(self, event, keyword: str):
     return None
 
 
-_dm_cooldown: dict = {}  # sender_id -> 上次给别人发私聊的时间戳
-
-
 async def message_friend(self, event, target: str, words: str) -> str:
-    """给某个好友发私聊。申桐无限制；其他人有频率限制。"""
-    import time
+    """给某个好友发私聊（任何人都能让她发，发不发由人格决定）。"""
     event = _real_event(event)
-    try:
-        from .local_config import MASTER_ID
-    except ImportError:
-        MASTER_ID = ""
-    sender_id = str(event.get_sender_id())
-    if not MASTER_ID or sender_id != MASTER_ID:
-        last = _dm_cooldown.get(sender_id, 0)
-        if time.time() - last < 60:
-            return "刚给别人发过私聊啦，本天才才不一直当你的信使呢！"
-        _dm_cooldown[sender_id] = time.time()
     hit = await _find_friend(self, event, target)
     if not hit:
         return f"我好友里没找到「{target}」，要么不是好友，要么名字记错了。"
