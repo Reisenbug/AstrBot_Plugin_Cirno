@@ -102,3 +102,69 @@ async def poke(self, event, target: str) -> str:
         logger.debug(f"[qq_actions] poke 失败: {e}")
         return f"想戳{name}，但没戳着。"
     return f"戳了戳{name}！"
+
+
+async def list_my_friends(self, event) -> str:
+    """返回琪露诺的好友列表（昵称 + QQ号）。"""
+    event = _real_event(event)
+    bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
+    if not bot:
+        return "现在连不上QQ，看不到好友。"
+    try:
+        friends = await bot.call_action("get_friend_list")
+    except Exception as e:
+        logger.debug(f"[qq_actions] get_friend_list 失败: {e}")
+        return "翻了翻，没看清都有哪些好友。"
+    if not friends:
+        return "好像一个好友都没有呢。"
+    lines = [f"{f.get('nickname', '?')}（{f.get('user_id')}）" for f in friends[:40]]
+    return "我的好友有：\n" + "\n".join(lines)
+
+
+async def _find_friend(self, event, keyword: str):
+    bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
+    if not bot or not keyword:
+        return None
+    try:
+        friends = await bot.call_action("get_friend_list")
+    except Exception:
+        return None
+    kw = keyword.strip().lower()
+    for f in friends or []:
+        uid = str(f.get("user_id", ""))
+        nick = f.get("nickname", "") or ""
+        remark = f.get("remark", "") or ""
+        if kw == uid or kw in nick.lower() or kw in remark.lower():
+            return uid, (remark or nick or uid)
+    return None
+
+
+_dm_cooldown: dict = {}  # sender_id -> 上次给别人发私聊的时间戳
+
+
+async def message_friend(self, event, target: str, words: str) -> str:
+    """给某个好友发私聊。申桐无限制；其他人有频率限制。"""
+    import time
+    event = _real_event(event)
+    try:
+        from .local_config import MASTER_ID
+    except ImportError:
+        MASTER_ID = ""
+    sender_id = str(event.get_sender_id())
+    if not MASTER_ID or sender_id != MASTER_ID:
+        last = _dm_cooldown.get(sender_id, 0)
+        if time.time() - last < 60:
+            return "刚给别人发过私聊啦，本天才才不一直当你的信使呢！"
+        _dm_cooldown[sender_id] = time.time()
+    hit = await _find_friend(self, event, target)
+    if not hit:
+        return f"我好友里没找到「{target}」，要么不是好友，要么名字记错了。"
+    qq, name = hit
+    platform = event.unified_msg_origin.split(":", 1)[0]
+    session = f"{platform}:FriendMessage:{qq}"
+    try:
+        await self.context.send_message(session, MessageChain().message(words))
+    except Exception as e:
+        logger.debug(f"[qq_actions] message_friend 失败: {e}")
+        return f"想给{name}发消息，但没发出去。"
+    return f"已经私聊跟{name}说了：{words}"
