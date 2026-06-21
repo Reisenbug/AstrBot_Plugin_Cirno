@@ -1385,11 +1385,12 @@ class Main(Star):
 
     @filter.llm_tool(name="forget_memory")
     async def forget_memory(self, event: AstrMessageEvent, keywords: str) -> str:
-        """当你想忘掉某段记忆时用——比如对方明确让你忘记某件事，或你自己想把某段不愉快/不想记的往事抹掉。
-        只忘你明确指定的内容，不要自己擅自判断哪些记忆是"假的"去删。
+        """删除你脑子里关于某件事的记忆。只要对方让你忘记某件具体的事（"忘掉X""别记得X了""把X忘了"），
+        你就必须调用这个工具真的把它删掉，不能只在嘴上说"忘了"却没真删。删完可以再用你的语气回应。
+        只忘明确指定的内容，不要自己擅自判断哪些记忆是"假的"去删。
 
         Args:
-            keywords(string): 要忘掉的事的关键词，多个词用空格分隔（词越具体越精准，比如"萤 牺牲"只删同时含这两个词的）。
+            keywords(string): 从对方话里提取出要忘的事的关键词，多个用空格分隔（如对方说"忘掉茶做团子的事"就传"茶 团子"）。
         """
         if not self._enable_recall_memory:
             return "记忆功能没开，没什么好忘的。"
