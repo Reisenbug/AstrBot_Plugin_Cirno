@@ -53,16 +53,24 @@ async def _find_group(self, event, keyword: str):
     return None
 
 
+_speak_cooldown: dict = {}  # sender_id -> 上次跨群说话时间戳
+
+
 async def speak_in_group(self, event, group: str, words: str) -> str:
-    """去指定群说话。仅限申桐触发、且只能往琪露诺自己在的群发。"""
+    """去指定群说话。申桐无限制；其他人有频率限制（防刷屏）。"""
+    import time
     event = _real_event(event)
     try:
         from .local_config import MASTER_ID
     except ImportError:
         MASTER_ID = ""
     sender_id = str(event.get_sender_id())
+    # 申桐无限制；其他人 60 秒内只能让她跨群说一次
     if not MASTER_ID or sender_id != MASTER_ID:
-        return "只有大妖精能让我去别的群说话，别人可不行。"
+        last = _speak_cooldown.get(sender_id, 0)
+        if time.time() - last < 60:
+            return "刚去别的群说过话啦，本天才才不当你的传话筒一直跑来跑去呢！"
+        _speak_cooldown[sender_id] = time.time()
     hit = await _find_group(self, event, group)
     if not hit:
         return f"我没找到「{group}」这个群，要么不在那群，要么名字记错了。"
