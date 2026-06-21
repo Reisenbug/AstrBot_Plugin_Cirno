@@ -3,3 +3,6 @@ local_config.py
 memes/
 last_prompt.txt
 .DS_Store
+SYSTEM_PROMPT_VIEW.txt
+CONTEXT_BLOAT_ANALYSIS.md
+baka_words.md
