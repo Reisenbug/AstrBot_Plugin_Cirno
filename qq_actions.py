@@ -8,8 +8,19 @@ from astrbot.core.message.message_event_result import MessageChain
 from astrbot.api import logger
 
 
+def _real_event(event):
+    """工具被 agent 调用时，event 可能是 ContextWrapper，需解包成真正的 AstrMessageEvent。"""
+    if hasattr(event, "get_sender_id"):
+        return event
+    inner = getattr(event, "context", None)
+    if inner is not None and hasattr(inner, "event"):
+        return inner.event
+    return event
+
+
 async def list_my_groups(self, event) -> str:
     """返回琪露诺所在的群列表（群名 + 群号）。"""
+    event = _real_event(event)
     bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
     if not bot:
         return "现在连不上QQ，看不到群。"
@@ -44,6 +55,7 @@ async def _find_group(self, event, keyword: str):
 
 async def speak_in_group(self, event, group: str, words: str) -> str:
     """去指定群说话。仅限申桐触发、且只能往琪露诺自己在的群发。"""
+    event = _real_event(event)
     try:
         from .local_config import MASTER_ID
     except ImportError:
@@ -67,6 +79,7 @@ async def speak_in_group(self, event, group: str, words: str) -> str:
 
 async def poke(self, event, target: str) -> str:
     """戳一戳当前群里的某个人。"""
+    event = _real_event(event)
     bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
     group_id = event.get_group_id()
     if not bot or not group_id:
