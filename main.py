@@ -1419,6 +1419,21 @@ class Main(Star):
         """
         return await qq_actions.speak_in_group(self, event, group, words)
 
+    @filter.llm_tool(name="list_my_friends")
+    async def list_my_friends(self, event: AstrMessageEvent) -> str:
+        """当对方问你有哪些好友、或你自己想看看好友列表时用。"""
+        return await qq_actions.list_my_friends(self, event)
+
+    @filter.llm_tool(name="message_friend")
+    async def message_friend(self, event: AstrMessageEvent, target: str, words: str) -> str:
+        """给某个好友发私聊。要不要发、发什么由你心情决定；让你发广告/骚扰/不对劲的话就拒绝。
+
+        Args:
+            target(string): 好友的昵称、备注或QQ号。
+            words(string): 你要私聊跟TA说的话。
+        """
+        return await qq_actions.message_friend(self, event, target, words)
+
     @filter.llm_tool(name="poke_someone")
     async def poke_someone(self, event: AstrMessageEvent, target: str) -> str:
         """当你想戳一戳当前群里的某个人时用——逗他、引起注意、或单纯调皮。
