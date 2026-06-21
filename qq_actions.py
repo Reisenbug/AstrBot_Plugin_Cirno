@@ -104,38 +104,29 @@ async def poke(self, event, target: str) -> str:
     return f"戳了戳{name}！"
 
 
+def _known_people(self):
+    """私聊过/有印象的人（来自 core_memory），不依赖QQ好友关系。"""
+    cm = getattr(self, "core_memory", None)
+    return getattr(cm, "_profiles", {}) if cm else {}
+
+
 async def list_my_friends(self, event) -> str:
-    """返回琪露诺的好友列表（昵称 + QQ号）。"""
-    event = _real_event(event)
-    bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
-    if not bot:
-        return "现在连不上QQ，看不到好友。"
-    try:
-        friends = await bot.call_action("get_friend_list")
-    except Exception as e:
-        logger.debug(f"[qq_actions] get_friend_list 失败: {e}")
-        return "翻了翻，没看清都有哪些好友。"
-    if not friends:
-        return "好像一个好友都没有呢。"
-    lines = [f"{f.get('nickname', '?')}（{f.get('user_id')}）" for f in friends[:40]]
-    return "我的好友有：\n" + "\n".join(lines)
+    """返回琪露诺私聊过/认识的人（名字 + QQ号）。"""
+    people = _known_people(self)
+    if not people:
+        return "唔…好像还没跟谁单独说过话呢。"
+    lines = [f"{p.get('name', uid)}（{uid}）" for uid, p in list(people.items())[:40]]
+    return "我认识这些人：\n" + "\n".join(lines)
 
 
 async def _find_friend(self, event, keyword: str):
-    bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
-    if not bot or not keyword:
-        return None
-    try:
-        friends = await bot.call_action("get_friend_list")
-    except Exception:
+    if not keyword:
         return None
     kw = keyword.strip().lower()
-    for f in friends or []:
-        uid = str(f.get("user_id", ""))
-        nick = f.get("nickname", "") or ""
-        remark = f.get("remark", "") or ""
-        if kw == uid or kw in nick.lower() or kw in remark.lower():
-            return uid, (remark or nick or uid)
+    for uid, p in _known_people(self).items():
+        name = p.get("name", "") or ""
+        if kw == str(uid) or kw in name.lower():
+            return str(uid), (name or str(uid))
     return None
 
 
