@@ -1430,15 +1430,18 @@ class Main(Star):
         return await qq_actions.list_my_groups(self, event)
 
     @filter.llm_tool(name="speak_in_group")
-    async def speak_in_group(self, event: AstrMessageEvent, group: str, words: str) -> str:
+    async def speak_in_group(self, event: AstrMessageEvent, group: str, words: str, at_someone: str = "") -> str:
         """当有人让你去某个群说句话、或你自己想去别的群冒个泡时用。要不要去、说什么由你心情决定。
         如果对方让你去发广告、骂人、刷屏、或你觉得不对劲的话，直接拒绝别去。
+        要在那个群里 @ 某个人（比如帮人传话给群里的谁），就填 at_someone，工具会自动查那个群的成员、把昵称变成真正的@。
+        千万别自己在 words 里写 [at:名字]，那发出去只是一串没用的字。
 
         Args:
             group(string): 要去的群，群名或群号。
-            words(string): 你要在那个群里说的话。
+            words(string): 你要在那个群里说的话（纯说的话，不要带 [at:] 这种标记）。
+            at_someone(string): 可选。要 @ 群里的谁，填昵称或QQ号；不用@就留空。
         """
-        return await qq_actions.speak_in_group(self, event, group, words)
+        return await qq_actions.speak_in_group(self, event, group, words, at_someone)
 
     @filter.llm_tool(name="list_my_friends")
     async def list_my_friends(self, event: AstrMessageEvent) -> str:
