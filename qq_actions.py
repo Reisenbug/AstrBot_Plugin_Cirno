@@ -61,8 +61,30 @@ async def _find_group(self, event, keyword: str):
     return None
 
 
-async def speak_in_group(self, event, group: str, words: str) -> str:
-    """去指定群说话（任何人都能让她去，说不说由人格决定）。"""
+async def _find_member_in(self, event, group_id: str, keyword: str):
+    """在指定群（不一定是当前群）里按昵称/群名片/QQ号找人，返回 (qq, 显示名) 或 None。"""
+    bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
+    if not bot or not group_id or not keyword:
+        return None
+    try:
+        members = await bot.call_action("get_group_member_list", group_id=int(group_id))
+    except Exception as e:
+        logger.debug(f"[qq_actions] 群成员查询失败: {e}")
+        return None
+    kw = keyword.strip().lower()
+    for m in members or []:
+        uid = str(m.get("user_id", ""))
+        card = (m.get("card", "") or "")
+        nick = (m.get("nickname", "") or "")
+        if kw == uid or (card and kw in card.lower()) or (nick and kw in nick.lower()):
+            return uid, (card or nick or uid)
+    return None
+
+
+async def speak_in_group(self, event, group: str, words: str, at_someone: str = "") -> str:
+    """去指定群说话（任何人都能让她去，说不说由人格决定）。
+    要 @ 群里某个人就传 at_someone（昵称或QQ号），会自动查群成员解析成真正的@。
+    words 里不要自己写 [at:xxx]，那只会变成一串没用的字。"""
     event = _real_event(event)
     hit = await _find_group(self, event, group)
     if not hit:
@@ -70,12 +92,24 @@ async def speak_in_group(self, event, group: str, words: str) -> str:
     gid, name = hit
     platform = event.unified_msg_origin.split(":", 1)[0]
     session = f"{platform}:GroupMessage:{gid}"
+    chain = MessageChain()
+    at_note = ""
+    if at_someone.strip():
+        member = await _find_member_in(self, event, gid, at_someone)
+        if not member:
+            return f"「{name}」群里没找到「{at_someone}」这个人，没法@她，话也先没发。"
+        qq, disp = member
+        chain = chain.at(disp, qq)
+        chain = chain.message(" " + words)
+        at_note = f"，@了{disp}"
+    else:
+        chain = chain.message(words)
     try:
-        await self.context.send_message(session, MessageChain().message(words))
+        await self.context.send_message(session, chain)
     except Exception as e:
         logger.debug(f"[qq_actions] speak_in_group 失败: {e}")
         return f"想去「{name}」说话，但没发出去。"
-    return f"已经去「{name}」群里说了：{words}"
+    return f"已经去「{name}」群里说了{at_note}：{words}"
 
 
 async def poke(self, event, target: str) -> str:
