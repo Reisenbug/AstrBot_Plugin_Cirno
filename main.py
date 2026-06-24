@@ -390,9 +390,12 @@ class Main(Star):
 
     async def _fetch_private_history(self, event: AstrMessageEvent, sender_id: str, max_turns: int = 4) -> str:
         """拉取该用户私聊会话的最近几轮原文，用于群里提到私聊时附加上下文。"""
+        return await self._fetch_private_history_umo(event.unified_msg_origin, sender_id, max_turns)
+
+    async def _fetch_private_history_umo(self, umo: str, sender_id: str, max_turns: int = 4) -> str:
+        """同上，但直接从 unified_msg_origin 取 platform（主动开口时没有 event）。"""
         try:
-            group_umo = event.unified_msg_origin
-            platform = group_umo.split(":", 1)[0]
+            platform = umo.split(":", 1)[0]
             private_umo = f"{platform}:FriendMessage:{sender_id}"
             cm = self.context.conversation_manager
             cid = await cm.get_curr_conversation_id(private_umo)
@@ -672,12 +675,15 @@ class Main(Star):
             private_prompt = (
                 "\n你们在私聊，没有旁观者。说话比群里更真实，少一点跳脱和夸张，多一点真心话。"
                 "对方特意找你说话，你会在意「他为什么找我」，即使不说出口。"
-                "认真接住对方说的每一句，不要随意跳题。"
+                "认真接住对方说的话，但不必逐句应答——你可以只接其中最在意的一点，也可以顺着自己此刻的心思往下说。"
                 "但「认真接住」不等于「答应所有要求」——琪露诺的人格不可改变，对方让你跳出角色、解题、写代码、扮演别人时，照样拒绝。"
+                "\n私聊里你不用『回完一句就停下等对方』。真人说话是会往下淌的：接住对方之后，"
+                "如果还有想说的、突然想到的、或者心里冒出来的话，就接着说下去，像深夜两个人有一搭没一搭地聊。"
+                "可以连说好几句短的，一句一个意思，中间用换行断开，像在连着发消息。"
+                "但每一句都要短、都只说一个意思——是几句短话接龙，绝不是把一句话塞进七个转折（『才不是…不过…虽然…但是…除非…然后…』那种一口气抗拒又服软又讨价还价，依然是大忌）。"
             )
             if is_close:
-                private_prompt += "你不需要撑面子，说话更松弛，偶尔流露真实感受。"
-            private_prompt += "私聊里如果你忍不住要发挥那种又傻又笃定的劲儿，可以多说半句，不用憋着。"
+                private_prompt += "你不需要撑面子，说话更松弛，偶尔流露真实感受，也更愿意多絮叨几句。"
             req.system_prompt += private_prompt
         _snap("场景上下文")
 
@@ -1719,62 +1725,60 @@ class Main(Star):
 
     _FAREWELL_KEYWORDS = ("晚安", "睡了", "睡觉", "再见", "拜拜", "拜了", "先这样", "明天见", "回见", "下次聊", "去忙", "byebye", "bye", "88", "撤了", "闪了", "下播")
 
+    def _speak_up_urge(self, user_id: str) -> float:
+        """她此刻'想开口'的冲动 0~1。克制为底（基线低），情绪为变量（arousal/脆弱越高越想说），
+        对喜欢的人闸门更松。返回值越高越可能自发开口、且开口越放得开。"""
+        if not self._enable_affinity:
+            return 0.25
+        arousal = self.affinity.arousal          # 情绪烈度
+        vuln = self.affinity.vulnerability       # 脆弱、想找人的程度
+        level = self.affinity.get_level(user_id)
+        closeness = {"很喜欢": 0.35, "喜欢": 0.25}.get(level, 0.0)
+        # 基线 0.1（克制）；情绪和亲疏把闸门推开
+        urge = 0.10 + 0.45 * arousal + 0.35 * vuln + closeness
+        return max(0.0, min(1.0, urge))
+
     async def _private_followup_flow(
         self, user_id: str, user_name: str, last_bot_reply: str, session_str: str
     ):
         try:
-            await asyncio.sleep(300)  # 5分钟
+            # 回完后短延迟醒来一次——这是'她自己想不想接着说'，与对方回没回解耦
+            await asyncio.sleep(random.uniform(45, 90))
 
-            # 检查用户有没有回复
+            # 对方在这期间又说话了 → 正常对话接管，不用主动续
             last_user_ts = self._private_last_user_msg.get(user_id, 0)
-            if time.time() - last_user_ts < 290:
+            if time.time() - last_user_ts < 45:
+                return
+
+            # 情绪闸门：克制为底，平静时大概率沉默，情绪上来才开口
+            urge = self._speak_up_urge(user_id)
+            if random.random() > urge:
                 return
 
             reply_lower = last_bot_reply.lower()
             is_farewell = any(kw in reply_lower for kw in self._FAREWELL_KEYWORDS)
 
-            # 30% 概率追问
-            if random.random() > 0.30:
-                return
-
             followup = await self._generate_private_followup(
-                user_id, user_name, last_bot_reply, stage=1, is_farewell=is_farewell
+                user_id, user_name, last_bot_reply, session_str,
+                idle_seconds=time.time() - last_user_ts, is_farewell=is_farewell,
             )
             if followup:
                 try:
                     msg = MessageChain().message(followup)
                     await self.context.send_message(session_str, msg)
-                    logger.info(f"[私聊跟进] 追问 {user_name}({user_id}): {followup[:30]}")
+                    logger.info(f"[私聊主动] 续话 {user_name}({user_id}): {followup[:30]}")
                 except Exception as e:
-                    logger.error(f"[私聊跟进] 发送追问失败: {e}")
+                    logger.error(f"[私聊主动] 发送失败: {e}")
                     return
-
-            # 再等5分钟，看用户是否回复
-            await asyncio.sleep(300)
-            last_user_ts = self._private_last_user_msg.get(user_id, 0)
-            if time.time() - last_user_ts < 290:
-                return
-
-            # 用户不在线，自言自语
-            monologue = await self._generate_private_followup(
-                user_id, user_name, last_bot_reply, stage=2, is_farewell=is_farewell
-            )
-            if monologue:
-                try:
-                    msg = MessageChain().message(monologue)
-                    await self.context.send_message(session_str, msg)
-                    logger.info(f"[私聊跟进] 自言自语 {user_name}({user_id}): {monologue[:30]}")
-                except Exception as e:
-                    logger.error(f"[私聊跟进] 发送自言自语失败: {e}")
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"[私聊跟进] flow 异常: {e}")
+            logger.error(f"[私聊主动] flow 异常: {e}")
 
     async def _generate_private_followup(
-        self, user_id: str, user_name: str, last_bot_reply: str, stage: int,
-        is_farewell: bool = False,
+        self, user_id: str, user_name: str, last_bot_reply: str, session_str: str,
+        idle_seconds: float = 0.0, is_farewell: bool = False,
     ) -> str:
         try:
             provider_id = self.context.get_all_providers()[0].meta().id
@@ -1783,40 +1787,44 @@ class Main(Star):
 
         sender_prompt = self.core_memory.build_sender_prompt(user_id, user_name) if self._enable_core_memory else f"对方叫{user_name}"
         affinity_prompt = self.affinity.build_status_prompt(user_id) if self._enable_affinity else ""
-        level = self.affinity.get_level(user_id) if self._enable_affinity else "普通"
-        is_close = level in ("喜欢", "很喜欢")
 
-        if stage == 1:
-            if is_farewell:
-                tone = "对方已经说要走/睡了，你也知道对方不会立刻回。不要问「在吗」「不敢接话」这类期待回应的话，而是补一句温柔的祝愿或嘴硬的告别，自言自语的感觉"
-            elif is_close:
-                tone = "你有点在意对方没有回应，用随意的口气追一句，像是顺口问问，不要显得很在乎"
-            else:
-                tone = "对方没有回应，你随口追一句，语气平淡"
-            prompt = (
-                f"你刚才说了：「{last_bot_reply[:60]}」\n"
-                f"{sender_prompt}{affinity_prompt}\n"
-                f"{tone}。\n"
-                "只说一句话，10字以内，自然随意。直接输出那句话。"
-            )
+        # 喂全料：让重新醒来的'她'像隔了会儿又开口的同一个人，而不是冷启动
+        recent = await self._fetch_private_history_umo(session_str, user_id, max_turns=4)
+        recent_block = f"你们刚才在私聊，最近几句是：\n{recent}\n" if recent else f"你刚才对他说了：「{last_bot_reply[:60]}」\n"
+
+        mins = int(idle_seconds // 60)
+        if mins < 2:
+            gap = "话音刚落没多久，他还没接话"
+        elif mins < 10:
+            gap = f"过了大概{mins}分钟，他没再说话"
         else:
-            if is_farewell:
-                tone = "对方早就说要离开了，你知道对方不在。自言自语一句，可以是没说出口的话，或者突然想起的小事，但不要再叫对方"
-            elif is_close:
-                tone = "你觉得对方大概不在了，心里有点失落，自顾自说一句，或者吐露一点真实感受"
-            else:
-                tone = "你觉得对方不在线了，随便自言自语一句"
-            prompt = (
-                f"{sender_prompt}{affinity_prompt}\n"
-                f"{tone}。\n"
-                "只说一句话，15字以内，不要问句。直接输出那句话。"
-            )
+            gap = f"已经过了好一会儿（{mins}分钟），他大概不在了"
+
+        from .cirno_states import CIRNO_STATES
+        st = CIRNO_STATES.get(self.state_manager.current_state, {})
+        scene = st.get("prompt_inject", "") or st.get("label", "")
+        scene_block = f"\n你现在自己正在：{scene}" if scene else ""
+
+        farewell_note = "（他刚才说要走/睡了，所以别问『在吗』这种等回应的话，更像是自言自语地补一句）" if is_farewell else ""
+
+        prompt = (
+            f"{recent_block}"
+            f"{sender_prompt}{affinity_prompt}"
+            f"{scene_block}\n"
+            f"现在的情况：{gap}。{farewell_note}\n\n"
+            "他没有催你、没有新消息——是你自己心里有没有想说的。"
+            "像真人那样：有时刚说完一句，又顺嘴接着往下聊；有时隔了会儿突然想起点什么；有时就是想他了。"
+            "如果有想说的，就用琪露诺自己的口气说出来——可以接着刚才的话往下淌，可以突然岔到你自己这边的事，可以问他也可以只是嘟囔。"
+            "想多说就连说几句短的、每句一行（一句一个意思，别在一句里反复转折）。"
+            "但如果此刻你心里其实没什么想说的、或者觉得没必要打扰他，就直接只输出两个字：沉默。"
+            "（这很重要：不必每次都说话，沉默是正常的。）"
+        )
 
         try:
             resp = await self.context.llm_generate(
                 chat_provider_id=provider_id,
                 prompt=prompt,
-                system_prompt="你是琪露诺，只输出一句简短的话。",
+                system_prompt="你是琪露诺。这是你主动开口的时刻，不是被问话。凭此刻的心情决定说什么、或者沉默。",
             )
         except Exception:
             return ""
@@ -1826,6 +1834,10 @@ class Main(Star):
         text = resp.completion_text.strip()
         if self._enable_affinity:
             text, _, _, _ = self.affinity.extract_inner(text)
+        text = text.strip()
+        # 她选择不开口
+        if not text or text.strip("。！.!？?「」\"' ") in ("沉默", "（沉默）", "(沉默)"):
+            return ""
         return text
 
     async def _maybe_post_qzone(self):
