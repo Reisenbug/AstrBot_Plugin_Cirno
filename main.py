@@ -317,7 +317,7 @@ class Main(Star):
         return re.sub(r"[ \t]+", " ", t).strip()
 
     _SENT_END_RE = re.compile(r"[。！？!?…\n]")
-    _HIST_REPLY_CAP = 120
+    _HIST_REPLY_CAP = 80
 
     @classmethod
     def _cap_reply_len(cls, text: str) -> str:
