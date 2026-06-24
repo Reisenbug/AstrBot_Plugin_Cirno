@@ -1467,6 +1467,44 @@ class Main(Star):
         """
         return await qq_actions.poke(self, event, target)
 
+    @filter.llm_tool(name="peek_group_chat")
+    async def peek_group_chat(self, event: AstrMessageEvent, group: str, count: int = 15) -> str:
+        """想知道某个群最近在聊什么时用——尤其要去别的群冒泡、@别人传话之前，先看看那群在聊啥再插嘴，别空降瞎说。
+
+        Args:
+            group(string): 要看的群，群名或群号。
+            count(number): 看最近几条，默认15，最多30。
+        """
+        return await qq_actions.peek_group_chat(self, event, group, count)
+
+    @filter.llm_tool(name="take_back_my_last")
+    async def take_back_my_last(self, event: AstrMessageEvent, group: str = "") -> str:
+        """你自己说错话、说漏嘴、或后悔了，想把刚才那句收回去时用——撤回你自己在群里发的最后一条。
+
+        Args:
+            group(string): 哪个群里的话要撤；在当前群就留空。
+        """
+        return await qq_actions.take_back_my_last(self, event, group)
+
+    @filter.llm_tool(name="post_qzone")
+    async def post_qzone(self, event: AstrMessageEvent, content: str) -> str:
+        """你想发一条QQ空间说说时用——记录此刻心情、发生的事、或单纯想让大家看到。说什么由你自己决定。
+
+        Args:
+            content(string): 说说的正文，用你自己的口气写，一两句话，别带标签别带emoji。
+        """
+        if not content or not content.strip():
+            return "想发说说，但还没想好说什么。"
+        now = time.time()
+        if now - self._qzone_last_post_ts < 1800:
+            return "刚发过说说没多久呢，等会儿再发吧。"
+        result = await self._post_to_qzone(content.strip())
+        if result.get("success"):
+            self._qzone_last_post_ts = now
+            await self.put_kv_data("qzone_last_post_ts", now)
+            return f"说说发出去啦：{content.strip()}"
+        return f"想发说说，但没发成（{result.get('msg', '出错了')}）。"
+
     @filter.after_message_sent()
     async def send_meme_after_reply(self, event: AstrMessageEvent):
         meme_path = event.get_extra("cirno_meme_path")
