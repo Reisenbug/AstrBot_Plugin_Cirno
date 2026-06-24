@@ -1742,17 +1742,20 @@ class Main(Star):
         self, user_id: str, user_name: str, last_bot_reply: str, session_str: str
     ):
         try:
-            # 回完后短延迟醒来一次——这是'她自己想不想接着说'，与对方回没回解耦
-            await asyncio.sleep(random.uniform(45, 90))
+            sent_ts = time.time()
+            # 回完后趁热的小停顿（3~15秒）——模拟'话以为说完了又没忍住'那一下，
+            # 不是隔很久才想起（那是慢线的事）。
+            await asyncio.sleep(random.uniform(3, 15))
 
-            # 对方在这期间又说话了 → 正常对话接管，不用主动续
+            # 这期间对方又说话了 → 正常对话接管，不用主动续
             last_user_ts = self._private_last_user_msg.get(user_id, 0)
-            if time.time() - last_user_ts < 45:
+            if last_user_ts > sent_ts:
                 return
 
-            # 情绪闸门：克制为底，平静时大概率沉默，情绪上来才开口
+            # 快续话闸门更严：只有情绪明显偏高（还悬着、收不住）才补一句，
+            # 平静时即便醒了也沉默，避免每次回完都追、变成机关枪。
             urge = self._speak_up_urge(user_id)
-            if random.random() > urge:
+            if urge < 0.45 or random.random() > urge:
                 return
 
             reply_lower = last_bot_reply.lower()
