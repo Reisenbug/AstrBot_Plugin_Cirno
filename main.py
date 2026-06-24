@@ -1380,10 +1380,13 @@ class Main(Star):
         if not hit:
             return f"群里没找到「{target}」这个人，你可以换个说法或先看看群里都有谁。"
         qq, name = hit
-        return (
-            f"找到了：{name}（{qq}）。把下面这句原样放进你的回复里，就能@到TA：\n"
-            f"[at:{qq}]{what_to_say}"
-        )
+        chain = MessageChain().at(name, qq).message(" " + what_to_say)
+        try:
+            await self.context.send_message(event.unified_msg_origin, chain)
+        except Exception as e:
+            logger.debug(f"[pull_someone_in] 发送失败: {e}")
+            return f"想@{name}把TA拉进来，但没发出去。"
+        return f"已经@了{name}：{what_to_say}"
 
     @filter.llm_tool(name="spread_gossip")
     async def spread_gossip(self, event: AstrMessageEvent, target: str, gossip: str) -> str:
@@ -1400,10 +1403,13 @@ class Main(Star):
         if not hit:
             return f"群里没找到「{target}」，先看看群里有谁吧。"
         qq, name = hit
-        return (
-            f"找到了：{name}（{qq}）。把下面这句放进回复就能@着TA搬弄：\n"
-            f"[at:{qq}]{gossip}"
-        )
+        chain = MessageChain().at(name, qq).message(" " + gossip)
+        try:
+            await self.context.send_message(event.unified_msg_origin, chain)
+        except Exception as e:
+            logger.debug(f"[spread_gossip] 发送失败: {e}")
+            return f"想@{name}搬弄两句，但没发出去。"
+        return f"已经@了{name}搬弄：{gossip}"
 
     @filter.llm_tool(name="forget_memory")
     async def forget_memory(self, event: AstrMessageEvent, keywords: str) -> str:
