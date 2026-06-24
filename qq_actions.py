@@ -172,3 +172,95 @@ async def message_friend(self, event, target: str, words: str) -> str:
         logger.debug(f"[qq_actions] message_friend 失败: {e}")
         return f"想给{name}发消息，但没发出去。"
     return f"已经私聊跟{name}说了：{words}"
+
+
+def _seg_to_text(segs) -> str:
+    """把 OneBot 消息段数组压成一行可读文本。"""
+    if isinstance(segs, str):
+        return segs
+    parts = []
+    for s in segs or []:
+        if not isinstance(s, dict):
+            continue
+        t = s.get("type")
+        d = s.get("data", {}) or {}
+        if t == "text":
+            parts.append(d.get("text", ""))
+        elif t == "at":
+            parts.append(f"@{d.get('qq', '')}")
+        elif t == "image":
+            parts.append("[图片]")
+        elif t == "face":
+            parts.append("[表情]")
+        elif t == "reply":
+            continue
+        else:
+            parts.append(f"[{t}]")
+    return "".join(parts).strip()
+
+
+async def peek_group_chat(self, event, group: str, count: int = 15) -> str:
+    """看某个群最近在聊什么（返回最近若干条消息：谁说了啥）。"""
+    event = _real_event(event)
+    hit = await _find_group(self, event, group)
+    if not hit:
+        return f"我没找到「{group}」这个群，看不了。"
+    gid, name = hit
+    bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
+    if not bot:
+        return "现在连不上QQ，看不了群里的消息。"
+    count = max(1, min(int(count or 15), 30))
+    try:
+        res = await bot.call_action("get_group_msg_history", group_id=int(gid), count=count)
+    except Exception as e:
+        logger.debug(f"[qq_actions] get_group_msg_history 失败: {e}")
+        return f"想看看「{name}」群在聊啥，但没翻到记录。"
+    msgs = (res or {}).get("messages", []) if isinstance(res, dict) else (res or [])
+    lines = []
+    for m in msgs:
+        sender = m.get("sender", {}) or {}
+        who = sender.get("card") or sender.get("nickname") or str(sender.get("user_id", "?"))
+        text = _seg_to_text(m.get("message"))
+        if text:
+            lines.append(f"{who}：{text}")
+    if not lines:
+        return f"「{name}」群最近没人说话。"
+    return f"「{name}」群最近在聊：\n" + "\n".join(lines[-count:])
+
+
+async def take_back_my_last(self, event, group: str = "") -> str:
+    """撤回琪露诺自己在群里刚说的最后一条话（说错了、后悔了）。
+    group 留空就撤回当前群里自己最后那条。"""
+    event = _real_event(event)
+    bot = getattr(event, "bot", None) or getattr(self, "_cached_bot", None)
+    if not bot:
+        return "现在连不上QQ，撤不了。"
+    if group.strip():
+        hit = await _find_group(self, event, group)
+        if not hit:
+            return f"我没找到「{group}」这个群。"
+        gid = hit[0]
+    else:
+        gid = event.get_group_id()
+        if not gid:
+            return "这儿不是群聊，没法撤回。"
+    try:
+        login = await bot.call_action("get_login_info")
+        my_uin = str(login.get("user_id", ""))
+        res = await bot.call_action("get_group_msg_history", group_id=int(gid), count=20)
+    except Exception as e:
+        logger.debug(f"[qq_actions] 撤回前取历史失败: {e}")
+        return "想撤回，但翻不到刚才说的话。"
+    msgs = (res or {}).get("messages", []) if isinstance(res, dict) else (res or [])
+    my_msg_id = None
+    for m in msgs:
+        if str((m.get("sender", {}) or {}).get("user_id", "")) == my_uin:
+            my_msg_id = m.get("message_id")
+    if my_msg_id is None:
+        return "刚才好像没说什么可撤的。"
+    try:
+        await bot.call_action("delete_msg", message_id=my_msg_id)
+    except Exception as e:
+        logger.debug(f"[qq_actions] delete_msg 失败: {e}")
+        return "想撤回那句话，但撤不掉（可能太久了）。"
+    return "唰——刚才那句话我收回！没说过没说过！"
