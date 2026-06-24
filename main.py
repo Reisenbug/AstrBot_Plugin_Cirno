@@ -1494,10 +1494,12 @@ class Main(Star):
 
     @filter.llm_tool(name="post_qzone")
     async def post_qzone(self, event: AstrMessageEvent, content: str) -> str:
-        """你想发一条QQ空间说说时用——记录此刻心情、发生的事、或单纯想让大家看到。说什么由你自己决定。
+        """你想发一条QQ空间说说时用——记录你自己的生活和心情，不是回应谁。说什么由你自己决定。
+        说说内容应该和当前这场聊天无关：写你自己在幻想乡里的事（抓青蛙、冻冰雕、跟大妖精玩、天气、嘴硬的小心情），
+        而不是把刚才聊的话题搬上去。这是你独处时的碎碎念，不是对话的延续。
 
         Args:
-            content(string): 说说的正文，用你自己的口气写，一两句话，别带标签别带emoji。
+            content(string): 说说的正文，用你自己的口气写，一两句话，别带标签别带emoji，别提刚才聊天里的人和事。
         """
         if not content or not content.strip():
             return "想发说说，但还没想好说什么。"
@@ -1847,14 +1849,18 @@ class Main(Star):
         from .cirno_states import CIRNO_STATES
         state = CIRNO_STATES.get(self.state_manager.current_state, {})
         label = state.get("label", "")
+        scene = state.get("prompt_inject", "")
         topics = state.get("proactive_topics", [])
-        topic_hint = random.choice(topics) if topics else label
+        topic_hint = random.choice(topics) if topics else ""
 
         prompt = (
-            f"琪露诺现在的状态：{label}。\n"
-            f"最近发生的事：{topic_hint}\n\n"
-            "用琪露诺的口气写一条QQ说说，像是在记录今天的心情或者发生的事。"
-            "要求：一到两句话，口气随意，可以傲娇、可以撒娇、可以抱怨，带点真实感。"
+            f"你此刻正在做的事：{label}。\n"
+            f"具体情形：{scene}\n"
+            + (f"你心里大概是这种感觉：{topic_hint}\n" if topic_hint else "")
+            + "\n现在你想发一条QQ空间说说，记录此刻幻想乡里你自己的生活和心情。"
+            "就写眼前正在发生的这件事、这个心情——和任何人跟你的聊天都无关，"
+            "是你独自一人时的碎碎念。\n"
+            "要求：一到两句话，口气随意，可以傲娇、可以撒娇、可以抱怨，像随手发的状态。"
             "不要加emoji，不要加标签，直接输出那句话。"
         )
         try:
