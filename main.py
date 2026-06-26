@@ -1744,9 +1744,9 @@ class Main(Star):
     ):
         try:
             sent_ts = time.time()
-            # 回完后趁热的小停顿（3~15秒）——模拟'话以为说完了又没忍住'那一下，
-            # 不是隔很久才想起（那是慢线的事）。
-            await asyncio.sleep(random.uniform(3, 15))
+            # 回完后趁热的小停顿（15~30秒随机）——模拟'话以为说完了又没忍住'那一下，
+            # 不是隔很久才想起（那是慢线的事）。期间对方先回复则跳过。
+            await asyncio.sleep(random.uniform(15, 30))
 
             # 这期间对方又说话了 → 正常对话接管，不用主动续
             last_user_ts = self._private_last_user_msg.get(user_id, 0)
