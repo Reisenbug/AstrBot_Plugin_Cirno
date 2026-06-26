@@ -1827,7 +1827,7 @@ class Main(Star):
             resp = await self.context.llm_generate(
                 chat_provider_id=provider_id,
                 prompt=prompt,
-                system_prompt="你是琪露诺。这是你主动开口的时刻，不是被问话。凭此刻的心情决定说什么、或者沉默。",
+                system_prompt="你是琪露诺。这是你主动开口的时刻，不是被问话。凭此刻的心情决定说什么、或者沉默。你在QQ打字，只发说出口的话，绝不写动作神态旁白（不写括号或星号里的「她笑了」「撅起嘴」这种第三人称描写），害羞就用话表达。",
             )
         except Exception:
             return ""
@@ -1840,6 +1840,11 @@ class Main(Star):
         text = text.strip()
         # 她选择不开口
         if not text or text.strip("。！.!？?「」\"' ") in ("沉默", "（沉默）", "(沉默)"):
+            return ""
+        # 出口剥掉括号/星号动作旁白（主动开口走独立路径，没经过主链路的旁白防线）
+        if "（" in text or "(" in text or "*" in text:
+            text = self._strip_roleplay(text)
+        if not text:
             return ""
         return text
 
