@@ -1730,12 +1730,13 @@ class Main(Star):
         对喜欢的人闸门更松。返回值越高越可能自发开口、且开口越放得开。"""
         if not self._enable_affinity:
             return 0.25
-        arousal = self.affinity.arousal          # 情绪烈度
+        arousal = self.affinity.arousal          # 情绪烈度（0.5 为平静基准）
         vuln = self.affinity.vulnerability       # 脆弱、想找人的程度
         level = self.affinity.get_level(user_id)
-        closeness = {"很喜欢": 0.35, "喜欢": 0.25}.get(level, 0.0)
-        # 基线 0.1（克制）；情绪和亲疏把闸门推开
-        urge = 0.10 + 0.45 * arousal + 0.35 * vuln + closeness
+        closeness = {"很喜欢": 0.15, "喜欢": 0.10}.get(level, 0.0)
+        # 克制为底：平静时（arousal≈0.5）开口冲动几乎为零，只有情绪明显高过平静、
+        # 或心里发软想找人时，才把闸门推过门槛。亲疏只是微调，不主导。
+        urge = 0.55 * max(0.0, arousal - 0.5) + 0.45 * vuln + closeness
         return max(0.0, min(1.0, urge))
 
     async def _private_followup_flow(
