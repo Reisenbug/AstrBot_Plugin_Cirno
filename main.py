@@ -1792,9 +1792,17 @@ class Main(Star):
         sender_prompt = self.core_memory.build_sender_prompt(user_id, user_name) if self._enable_core_memory else f"对方叫{user_name}"
         affinity_prompt = self.affinity.build_status_prompt(user_id) if self._enable_affinity else ""
 
-        # 喂全料：让重新醒来的'她'像隔了会儿又开口的同一个人，而不是冷启动
+        # 喂全料：让重新醒来的'她'像隔了会儿又开口的同一个人，而不是冷启动。
+        # 既给最近几轮做上下文，又单独点明'你刚说出口的那句完整原文'——续话要接的就是它，
+        # 不能只看库里截断的摘要，否则接不上、显得割裂。
         recent = await self._fetch_private_history_umo(session_str, user_id, max_turns=4)
-        recent_block = f"你们刚才在私聊，最近几句是：\n{recent}\n" if recent else f"你刚才对他说了：「{last_bot_reply[:60]}」\n"
+        if recent:
+            recent_block = (
+                f"你们刚才在私聊，最近几句是：\n{recent}\n"
+                f"而你最后说出口的、要接着往下说的，正是这句：「{last_bot_reply}」\n"
+            )
+        else:
+            recent_block = f"你刚才对他说了：「{last_bot_reply}」\n"
 
         mins = int(idle_seconds // 60)
         if mins < 2:
@@ -1828,7 +1836,13 @@ class Main(Star):
             resp = await self.context.llm_generate(
                 chat_provider_id=provider_id,
                 prompt=prompt,
-                system_prompt="你是琪露诺。这是你主动开口的时刻，不是被问话。凭此刻的心情决定说什么、或者沉默。你在QQ打字，只发说出口的话，绝不写动作神态旁白（不写括号或星号里的「她笑了」「撅起嘴」这种第三人称描写），害羞就用话表达。",
+                system_prompt=(
+                    "你是琪露诺。这是你主动开口的时刻，不是被问话。凭此刻的心情决定说什么、或者沉默。"
+                    "你在QQ打字，只发说出口的话，绝不写动作神态旁白（不写括号或星号里的「她笑了」「撅起嘴」这种第三人称描写），害羞就用话表达。"
+                    "每句都短，一句只说一个意思，绝不在一句里反复转折（『才不是…不过…虽然…但是』那种是大忌）。"
+                    "几乎不发 emoji 和颜文字，情绪靠话表达。"
+                    "『本天才』『最强』偶尔亮一次就够，别每句都挂。"
+                ),
             )
         except Exception:
             return ""
