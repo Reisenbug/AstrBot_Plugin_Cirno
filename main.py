@@ -26,10 +26,14 @@ from .group_message_store import GroupMessageStore
 from . import qq_actions
 
 try:
-    from .local_config import DEFAULT_USER_INFO, ABSOLUTE_RULES
+    from .persona_rules import ABSOLUTE_RULES
+except ImportError:
+    ABSOLUTE_RULES = ""
+
+try:
+    from .local_config import DEFAULT_USER_INFO
 except ImportError:
     DEFAULT_USER_INFO = {}
-    ABSOLUTE_RULES = ""
 
 try:
     from .local_config import MASTER_ID, MASTER_PROMPT
