@@ -124,15 +124,24 @@ class CoreMemory:
             original = p.get("original_prompt", "")
             events = p.get("important_events", [])
             parts = [f"\n【当前对话者】{name}（QQ昵称「{sender_nickname}」）。"]
-            if relationship:
-                parts.append(f"你对{name}的印象：{relationship}")
-            elif original:
-                parts.append(original)
+            feeling = relationship or original
+            if feeling:
+                parts.append(
+                    f"\n【你对{name}的感觉】{feeling}"
+                    f"\n这个感觉决定你这句话的态度和语气，比话题本身重要。"
+                    f"同样一句话，换个人说，你的反应可以完全相反——"
+                    f"烦的人说「饿了」你嫌弃地推开他，亲近的人说「饿了」你凑上去想喂他。"
+                    f"先想清楚现在说话的是{name}、你对他是什么感觉，再决定怎么回。"
+                )
             if events:
                 migrated = [self._migrate_event(e) for e in events]
                 migrated.sort(key=lambda e: e.get("importance", 5), reverse=True)
-                texts = [e["text"] for e in migrated[:3]]
-                parts.append("你记得和他之间发生过这些事：" + "；".join(texts))
+                texts = [e["text"] for e in migrated[:2]]
+                parts.append(
+                    "\n（和他发生过的事，别主动翻出来说，只在他提起时别显得健忘："
+                    + "；".join(texts)
+                    + "）"
+                )
             return "".join(parts)
         else:
             return f"\n当前和你对话的人是「{sender_nickname}」，你不认识这个人。"
