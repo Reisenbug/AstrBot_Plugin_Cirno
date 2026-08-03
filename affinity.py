@@ -227,6 +227,21 @@ class AffinityManager:
     def get_user_data(self, user_id: str) -> dict:
         return self._safe_user_data(user_id)
 
+    @staticmethod
+    def peek_sentiment(bot_reply: str) -> tuple[str, str]:
+        """只取 <inner> 里的原始 sentiment/intensity，供心情层使用。取不到返回空。"""
+        m = INNER_PATTERN.search(bot_reply)
+        if not m:
+            return "", ""
+        try:
+            data = json.loads(m.group(1))
+        except (json.JSONDecodeError, ValueError, AttributeError):
+            return "", ""
+        return (
+            str(data.get("sentiment", "")).strip().lower(),
+            str(data.get("intensity", "")).strip().lower(),
+        )
+
     def extract_inner(self, bot_reply: str) -> tuple[str, float | None, str | None, str | None]:
         m = INNER_PATTERN.search(bot_reply)
         if not m:

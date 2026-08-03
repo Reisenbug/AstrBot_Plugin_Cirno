@@ -20,6 +20,7 @@ from .jargon_filter import JargonStatisticalFilter
 from .meme_sender import MemeSelector
 from .recall_memory import RecallMemory
 from .state_manager import CirnoStateManager
+from .mood_manager import CirnoMoodManager
 from .user_message_store import UserMessageStore
 from .slang_store import SlangStore
 from .group_message_store import GroupMessageStore
@@ -61,6 +62,7 @@ class Main(Star):
             proactive_base_chance=proactive_cfg.get("base_chance", 0.15),
             enable_season=state_cfg.get("enable_season", True),
         )
+        self.mood_manager = CirnoMoodManager()
 
         self._enable_core_memory = memory_cfg.get("enable_core_memory", True)
         self._enable_recall_memory = memory_cfg.get("enable_recall_memory", True)
@@ -161,6 +163,11 @@ class Main(Star):
             logger.info(
                 f"琪露诺状态已恢复: {self.state_manager.current_state}"
             )
+
+        saved_mood = await self.get_kv_data("mood_data", None)
+        if saved_mood and isinstance(saved_mood, dict):
+            self.mood_manager.from_dict(saved_mood)
+            logger.info(f"琪露诺心情已恢复: {self.mood_manager.get_debug_info()}")
 
         config_sessions = self.config.get("group_sessions", "")
         if config_sessions and isinstance(config_sessions, str):
@@ -368,6 +375,28 @@ class Main(Star):
                         t = self._cap_reply_len(t)
                     item["text"] = t
 
+    async def _refresh_mood_note(self):
+        """换了模式之后，让她自己说此刻心里挂着什么事。
+        骨架（哪种模式）是抽的，内容是她自己填的——这样她嘴里才有别人没喂给她的东西。"""
+        try:
+            providers = self.context.get_all_providers()
+            if not providers:
+                return
+            persona = await self.context.persona_manager.get_default_persona_v3()
+            base = persona.get("prompt", "") if persona else ""
+            llm_resp = await self.context.llm_generate(
+                chat_provider_id=providers[0].meta().id,
+                prompt=self.mood_manager.build_seed_question(),
+                system_prompt=base + "\n只回答这一句，不要加任何标签、括号、旁白。",
+            )
+            note = (getattr(llm_resp, "completion_text", "") or "").strip()
+            note = self._strip_roleplay(re.sub(r"<inner>.*", "", note, flags=re.DOTALL))
+            if note:
+                self.mood_manager.set_note(note)
+                self.mark_dirty("mood")
+        except Exception as e:
+            logger.warning(f"刷新琪露诺心情内容失败: {e}")
+
     def mark_dirty(self, *names: str):
         self._dirty.update(names)
 
@@ -385,6 +414,8 @@ class Main(Star):
                 await self.core_memory.save()
             if "state" in dirty:
                 await self.put_kv_data("state_data", self.state_manager.to_dict())
+            if "mood" in dirty:
+                await self.put_kv_data("mood_data", self.mood_manager.to_dict())
         except Exception as e:
             self._dirty.update(dirty)
             logger.error(f"[琪露诺落盘失败] {e}", exc_info=True)
@@ -536,6 +567,10 @@ class Main(Star):
             if bot:
                 self._spawn(self._sync_qq_status(bot), "sync_qq_status")
 
+        if self.mood_manager.is_expired():
+            self.mood_manager.rotate()
+            self._spawn(self._refresh_mood_note(), "refresh_mood_note")
+
         if event.session.message_type == MessageType.GROUP_MESSAGE:
             umo = event.unified_msg_origin
             if umo not in self._group_sessions:
@@ -599,6 +634,7 @@ class Main(Star):
 
         # 2. 状态机
         req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
+        req.system_prompt += self.mood_manager.get_prompt_injection()
         _snap("状态机")
 
         # 3. 对话者身份 + 好感度（放在一起，让 LLM 先建立对"这个人"的完整认知）
@@ -858,6 +894,12 @@ class Main(Star):
             bot_reply = random.choice(["哼。", "……怎么了？", "嗯？"])
         if bot_reply != (resp.completion_text or ""):
             resp.completion_text = bot_reply
+
+        if bot_reply:
+            sentiment, intensity = self.affinity.peek_sentiment(bot_reply)
+            if sentiment:
+                self.mood_manager.mark_feeling(sentiment, intensity)
+                self.mark_dirty("mood")
 
         valence_shift: float | None = None
         interaction_type: str | None = None
@@ -2630,6 +2672,7 @@ class Main(Star):
         if self._diag_task and not self._diag_task.done():
             self._diag_task.cancel()
         await self.put_kv_data("state_data", self.state_manager.to_dict())
+        await self.put_kv_data("mood_data", self.mood_manager.to_dict())
         await self.put_kv_data("group_sessions", list(self._group_sessions))
         if self._enable_affinity:
             await self.affinity.save()
