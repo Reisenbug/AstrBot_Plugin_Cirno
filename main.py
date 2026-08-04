@@ -22,6 +22,7 @@ from .recall_memory import RecallMemory
 from .state_manager import CirnoStateManager
 from .mood_manager import CirnoMoodManager
 from .promise_store import PromiseStore
+from .situation_store import SituationStore
 from .user_message_store import UserMessageStore
 from .slang_store import SlangStore
 from .group_message_store import GroupMessageStore
@@ -65,6 +66,7 @@ class Main(Star):
         )
         self.mood_manager = CirnoMoodManager()
         self.promises = PromiseStore()
+        self.situation = SituationStore()
 
         self._enable_core_memory = memory_cfg.get("enable_core_memory", True)
         self._enable_recall_memory = memory_cfg.get("enable_recall_memory", True)
@@ -170,6 +172,12 @@ class Main(Star):
         if saved_mood and isinstance(saved_mood, dict):
             self.mood_manager.from_dict(saved_mood)
             logger.info(f"琪露诺心情已恢复: {self.mood_manager.get_debug_info()}")
+
+        saved_situation = await self.get_kv_data("situation", None)
+        if saved_situation:
+            self.situation.from_dict(saved_situation)
+            if self.situation.text:
+                logger.info(f"琪露诺处境已恢复: {self.situation.text}")
 
         saved_promises = await self.get_kv_data("promises", None)
         if saved_promises:
@@ -559,6 +567,36 @@ class Main(Star):
         logger.debug(f"[兜底] 已为 {event.unified_msg_origin} 设置错误兜底")
         # 记录会话活动时间，供卡死诊断用
         self._session_last_seen[event.unified_msg_origin] = time.time()
+        await self._maybe_set_situation(event)
+
+    _SITUATION_RE = re.compile(r"^\s*当前状况[:：,，\s]*(.*)$", re.DOTALL)
+
+    def _master_name(self) -> str:
+        if MASTER_ID:
+            p = self.core_memory.get_profile(MASTER_ID)
+            if p and p.get("name"):
+                return p["name"]
+        return "大妖精"
+
+    async def _maybe_set_situation(self, event: AstrMessageEvent):
+        """主人说「当前状况 xxx」就更新她的处境。只有主人能设——她住在主人电脑里。"""
+        if not MASTER_ID or str(event.get_sender_id()) != MASTER_ID:
+            return
+        raw = (event.message_str or "").strip()
+        raw = re.sub(r"@[^(]+\(\d+\)", "", raw).strip()
+        m = self._SITUATION_RE.match(raw)
+        if not m:
+            return
+        body = m.group(1).strip()
+        if body in ("清除", "取消", "结束", "没了", "无"):
+            self.situation.clear()
+            logger.info("[琪露诺处境] 已清除")
+        elif body:
+            self.situation.set(body)
+            logger.info(f"[琪露诺处境] {body}")
+        else:
+            return
+        await self.put_kv_data("situation", self.situation.to_dict())
 
     @filter.on_llm_request()
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
@@ -645,6 +683,7 @@ class Main(Star):
         # 2. 状态机
         req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
         req.system_prompt += self.mood_manager.get_prompt_injection()
+        req.system_prompt += self.situation.build_prompt(self._master_name())
         _snap("状态机")
 
         # 3. 对话者身份 + 好感度（放在一起，让 LLM 先建立对"这个人"的完整认知）
@@ -2765,6 +2804,7 @@ class Main(Star):
         await self.put_kv_data("state_data", self.state_manager.to_dict())
         await self.put_kv_data("mood_data", self.mood_manager.to_dict())
         await self.put_kv_data("promises", self.promises.to_list())
+        await self.put_kv_data("situation", self.situation.to_dict())
         await self.put_kv_data("group_sessions", list(self._group_sessions))
         if self._enable_affinity:
             await self.affinity.save()
