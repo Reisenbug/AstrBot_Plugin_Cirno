@@ -85,6 +85,12 @@
         "default": true,
         "hint": "启用后琪露诺会动态更新对每个人的印象"
       },
+      "daily_profile_group": {
+        "description": "每日画像群号",
+        "type": "string",
+        "default": "",
+        "hint": "填群号后，每天凌晨3点根据该群昨日发言批量更新用户画像。留空则不启用"
+      },
       "enable_recall_memory": {
         "description": "启用回忆记忆",
         "type": "bool",

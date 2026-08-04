@@ -106,7 +106,9 @@ class Main(Star):
         self._group_sessions: set[str] = set()
         self._cron_job_id: str | None = None
         self._daily_profile_cron_id: str | None = None
-        self._daily_profile_group = "1050431190"
+        self._daily_profile_group = str(
+            memory_cfg.get("daily_profile_group", "") or ""
+        )
         self._last_full_prompt: str = ""
         self._imitation_state: dict[str, dict] = {}  # session_id -> state
         data_dir = str(StarTools.get_data_dir("astrbot_plugin_cirno"))
@@ -1550,7 +1552,7 @@ class Main(Star):
     async def watch_for_someone(self, event: AstrMessageEvent, who: str, what_to_do: str) -> str:
         """当你答应了「等某个人再冒头/再说话，我就去干嘛」这种事时，用这个记下来，
         这样他一说话你真的会被叫醒去兑现——不记就是空头支票，说过就忘了。
-        比如有人说"蕾米再说话就喊我来气她"，你答应了，就把 who 填蕾米、what_to_do 填"喊大妖精来一起气蕾米"。
+        比如有人说"魔理沙再冒头就喊我来堵她"，你答应了，就把 who 填魔理沙、what_to_do 填"喊他来一起堵魔理沙"。
         只在真的要盯着某个人等他出现时才用；随口的玩笑话不用记。
 
         Args:
@@ -1850,6 +1852,8 @@ class Main(Star):
 
     async def _daily_profile_update(self):
         group_id = self._daily_profile_group
+        if not group_id:
+            return
         yesterday = self.group_msg_store.get_yesterday()
         user_ids = self.group_msg_store.get_users_for_day(group_id, yesterday)
         if not user_ids:
