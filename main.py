@@ -395,13 +395,13 @@ class Main(Star):
         """换了模式之后，让她自己说此刻心里挂着什么事。
         骨架（哪种模式）是抽的，内容是她自己填的——这样她嘴里才有别人没喂给她的东西。"""
         try:
-            providers = self.context.get_all_providers()
-            if not providers:
+            provider_id = self._chat_provider_id()
+            if not provider_id:
                 return
             persona = await self.context.persona_manager.get_default_persona_v3()
             base = persona.get("prompt", "") if persona else ""
             llm_resp = await self.context.llm_generate(
-                chat_provider_id=providers[0].meta().id,
+                chat_provider_id=provider_id,
                 prompt=self.mood_manager.build_seed_question(),
                 system_prompt=base + "\n只回答这一句，不要加任何标签、括号、旁白。",
             )
@@ -570,6 +570,21 @@ class Main(Star):
         await self._maybe_set_situation(event)
 
     _SITUATION_RE = re.compile(r"^\s*当前状况[:：,，\s]*(.*)$", re.DOTALL)
+
+    def _chat_provider_id(self, umo: str | None = None) -> str | None:
+        """后台任务要用「聊天实际在用的」那个 provider。
+        get_all_providers()[0] 拿到的是配置里的第一个，未必是启用中的那个——
+        实测第一个是不通的源，导致核心记忆/主动发言等后台调用全部超时，而聊天本身正常。"""
+        try:
+            prov = self.context.get_using_provider(umo=umo)
+            if prov:
+                return prov.meta().id
+        except Exception as e:
+            logger.debug(f"[provider] get_using_provider 失败: {e}")
+        try:
+            return self.context.get_all_providers()[0].meta().id
+        except Exception:
+            return None
 
     def _master_name(self) -> str:
         if MASTER_ID:
@@ -1215,7 +1230,7 @@ class Main(Star):
 
     async def _recall_llm_generate(self, prompt: str):
         try:
-            provider_id = self.context.get_all_providers()[0].meta().id
+            provider_id = self._chat_provider_id()
         except Exception:
             logger.warning("回忆记忆：无可用 LLM Provider")
             return None
@@ -1239,7 +1254,7 @@ class Main(Star):
         prompt_text = self.affinity.build_key_event_prompt(nickname, messages_text)
 
         try:
-            provider_id = self.context.get_all_providers()[0].meta().id
+            provider_id = self._chat_provider_id()
         except Exception:
             logger.warning("关键事件评估：无可用 LLM Provider")
             return
@@ -1282,7 +1297,7 @@ class Main(Star):
 
     async def _extract_and_memorize(self, user_id: str, user_name: str, user_msg: str, bot_reply: str):
         try:
-            provider_id = self.context.get_all_providers()[0].meta().id
+            provider_id = self._chat_provider_id()
         except Exception:
             logger.warning("记住触发：无可用 LLM Provider")
             return
@@ -1324,7 +1339,7 @@ class Main(Star):
             return False
 
         try:
-            provider_id = self.context.get_all_providers()[0].meta().id
+            provider_id = self._chat_provider_id()
         except Exception:
             return True
 
@@ -1366,7 +1381,7 @@ class Main(Star):
         if any(user_msg.strip().startswith(p) and len(user_msg.strip()) < 10 for p in self._WRITEBACK_SKIP_PATTERNS):
             return
         try:
-            provider_id = self.context.get_all_providers()[0].meta().id
+            provider_id = self._chat_provider_id()
         except Exception:
             return
 
@@ -1425,7 +1440,7 @@ class Main(Star):
         )
 
         try:
-            provider_id = self.context.get_all_providers()[0].meta().id
+            provider_id = self._chat_provider_id()
         except Exception:
             logger.warning("模仿风格：无可用 LLM Provider")
             return f"（无法分析{name}的说话风格）"
@@ -1571,8 +1586,8 @@ class Main(Star):
         免得念一句跟当前语境脱节的存货台词。"""
         try:
             await asyncio.sleep(random.uniform(2, 5))
-            providers = self.context.get_all_providers()
-            if not providers:
+            provider_id = self._chat_provider_id(umo=promise["umo"])
+            if not provider_id:
                 return
             persona = await self.context.persona_manager.get_default_persona_v3(
                 umo=promise["umo"]
@@ -1587,7 +1602,7 @@ class Main(Star):
                 f"你要兑现——一句话，把{promise['notify_name']}喊过来，别解释来龙去脉、别复述当时的约定。",
             ])
             llm_resp = await self.context.llm_generate(
-                chat_provider_id=providers[0].meta().id,
+                chat_provider_id=provider_id,
                 prompt=f"[{promise['watch_name']}冒头了，去喊{promise['notify_name']}]",
                 system_prompt=system_prompt,
             )
@@ -1766,7 +1781,7 @@ class Main(Star):
         )
 
         try:
-            provider_id = self.context.get_all_providers()[0].meta().id
+            provider_id = self._chat_provider_id()
         except Exception:
             logger.warning("[琪露诺学习] 无可用 LLM Provider，跳过")
             return
@@ -1961,7 +1976,7 @@ class Main(Star):
         idle_seconds: float = 0.0, is_farewell: bool = False,
     ) -> str:
         try:
-            provider_id = self.context.get_all_providers()[0].meta().id
+            provider_id = self._chat_provider_id()
         except Exception:
             return ""
 
@@ -2053,7 +2068,7 @@ class Main(Star):
 
     async def _publish_qzone(self):
         try:
-            provider_id = self.context.get_all_providers()[0].meta().id
+            provider_id = self._chat_provider_id()
         except Exception:
             return
 
@@ -2213,10 +2228,9 @@ class Main(Star):
         try:
             provider_id = await self.context.get_current_chat_provider_id(session_str)
         except Exception:
-            providers = self.context.get_all_providers()
-            if not providers:
+            provider_id = self._chat_provider_id(umo=session_str)
+            if not provider_id:
                 return
-            provider_id = providers[0].meta().id
 
         persona = await self.context.persona_manager.get_default_persona_v3(umo=session_str)
         base_system_prompt = persona.get("prompt", "") if persona else ""
@@ -2266,11 +2280,10 @@ class Main(Star):
                 session_str
             )
         except Exception:
-            providers = self.context.get_all_providers()
-            if not providers:
+            provider_id = self._chat_provider_id(umo=session_str)
+            if not provider_id:
                 logger.warning("没有可用的 LLM Provider，跳过主动发言")
                 return
-            provider_id = providers[0].meta().id
 
         persona = await self.context.persona_manager.get_default_persona_v3(
             umo=session_str
@@ -2410,7 +2423,7 @@ class Main(Star):
                 3: ["烦死了", "不理你了", "……", "真的会生气哦", "最后警告"],
             }
         try:
-            provider_id = self.context.get_all_providers()[0].meta().id
+            provider_id = self._chat_provider_id()
         except Exception:
             return random.choice(fallback_pool.get(count, ["..."]))
 

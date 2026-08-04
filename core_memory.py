@@ -185,9 +185,19 @@ class CoreMemory:
             }
             self._profiles[user_id] = profile
 
+        provider_id = None
         try:
-            provider_id = context.get_all_providers()[0].meta().id
+            prov = context.get_using_provider()
+            if prov:
+                provider_id = prov.meta().id
         except Exception:
+            pass
+        if not provider_id:
+            try:
+                provider_id = context.get_all_providers()[0].meta().id
+            except Exception:
+                pass
+        if not provider_id:
             logger.warning("核心记忆更新：无可用 LLM Provider")
             return
 
