@@ -21,6 +21,7 @@ from .meme_sender import MemeSelector
 from .recall_memory import RecallMemory
 from .state_manager import CirnoStateManager
 from .mood_manager import CirnoMoodManager
+from .promise_store import PromiseStore
 from .user_message_store import UserMessageStore
 from .slang_store import SlangStore
 from .group_message_store import GroupMessageStore
@@ -63,6 +64,7 @@ class Main(Star):
             enable_season=state_cfg.get("enable_season", True),
         )
         self.mood_manager = CirnoMoodManager()
+        self.promises = PromiseStore()
 
         self._enable_core_memory = memory_cfg.get("enable_core_memory", True)
         self._enable_recall_memory = memory_cfg.get("enable_recall_memory", True)
@@ -168,6 +170,12 @@ class Main(Star):
         if saved_mood and isinstance(saved_mood, dict):
             self.mood_manager.from_dict(saved_mood)
             logger.info(f"琪露诺心情已恢复: {self.mood_manager.get_debug_info()}")
+
+        saved_promises = await self.get_kv_data("promises", None)
+        if saved_promises:
+            self.promises.from_list(saved_promises)
+            if self.promises.pending():
+                logger.info(f"琪露诺守约已恢复: {len(self.promises.pending())} 条")
 
         config_sessions = self.config.get("group_sessions", "")
         if config_sessions and isinstance(config_sessions, str):
@@ -416,6 +424,8 @@ class Main(Star):
                 await self.put_kv_data("state_data", self.state_manager.to_dict())
             if "mood" in dirty:
                 await self.put_kv_data("mood_data", self.mood_manager.to_dict())
+            if "promises" in dirty:
+                await self.put_kv_data("promises", self.promises.to_list())
         except Exception as e:
             self._dirty.update(dirty)
             logger.error(f"[琪露诺落盘失败] {e}", exc_info=True)
@@ -1482,6 +1492,78 @@ class Main(Star):
             return f"忘掉了 {removed} 条关于「{' '.join(kws)}」的记忆。就当从来没发生过吧。"
         return f"翻了翻脑子，没找到关于「{' '.join(kws)}」的记忆，本来就不记得。"
 
+    @filter.llm_tool(name="watch_for_someone")
+    async def watch_for_someone(self, event: AstrMessageEvent, who: str, what_to_do: str) -> str:
+        """当你答应了「等某个人再冒头/再说话，我就去干嘛」这种事时，用这个记下来，
+        这样他一说话你真的会被叫醒去兑现——不记就是空头支票，说过就忘了。
+        比如有人说"蕾米再说话就喊我来气她"，你答应了，就把 who 填蕾米、what_to_do 填"喊大妖精来一起气蕾米"。
+        只在真的要盯着某个人等他出现时才用；随口的玩笑话不用记。
+
+        Args:
+            who(string): 你要盯着的那个人，昵称、群名片或QQ号。如果消息里@了他，直接填他的名字就行。
+            what_to_do(string): 他一出现你要做什么，一句话说清楚（要叫谁、干什么）。
+        """
+        if event.session.message_type != MessageType.GROUP_MESSAGE:
+            return "这个只能在群里用啦。"
+        found = None
+        for m in re.finditer(r"@([^(]+)\((\d+)\)", event.message_str or ""):
+            if who.strip().lower() in m.group(1).strip().lower() or who.strip() == m.group(2):
+                found = (m.group(2), m.group(1).strip())
+                break
+        if not found:
+            found = await self._find_group_member(event, who)
+        if not found:
+            return f"群里没找到「{who}」这个人，记不下来。"
+        watch_qq, watch_name = found
+        self.promises.add(
+            watch_qq=watch_qq,
+            watch_name=watch_name,
+            notify_qq=str(event.get_sender_id()),
+            notify_name=event.get_sender_name(),
+            what=what_to_do,
+            umo=event.unified_msg_origin,
+        )
+        self.mark_dirty("promises")
+        logger.info(f"[琪露诺守约] 盯上 {watch_name}({watch_qq})：{what_to_do}")
+        return f"记住了：等{watch_name}一冒头，就去{what_to_do}。"
+
+    async def _fulfill_promise(self, event: AstrMessageEvent, promise: dict):
+        """被盯的人说话了，兑现承诺。走一次 LLM，带上当时答应了什么 + 他现在说了什么，
+        免得念一句跟当前语境脱节的存货台词。"""
+        try:
+            await asyncio.sleep(random.uniform(2, 5))
+            providers = self.context.get_all_providers()
+            if not providers:
+                return
+            persona = await self.context.persona_manager.get_default_persona_v3(
+                umo=promise["umo"]
+            )
+            base = persona.get("prompt", "") if persona else ""
+            system_prompt = "\n".join([
+                base,
+                self.mood_manager.get_prompt_injection(),
+                ABSOLUTE_RULES,
+                f"\n【你答应过的事】之前{promise['notify_name']}交代你：{promise['what']}。"
+                f"你答应了。现在{promise['watch_name']}冒头了，说了：「{(event.message_str or '')[:60]}」。"
+                f"你要兑现——一句话，把{promise['notify_name']}喊过来，别解释来龙去脉、别复述当时的约定。",
+            ])
+            llm_resp = await self.context.llm_generate(
+                chat_provider_id=providers[0].meta().id,
+                prompt=f"[{promise['watch_name']}冒头了，去喊{promise['notify_name']}]",
+                system_prompt=system_prompt,
+            )
+            text, _, _, _ = self.affinity.extract_inner(
+                (getattr(llm_resp, "completion_text", "") or "").strip()
+            )
+            text = self._strip_roleplay(text)
+            if not text:
+                return
+            chain = MessageChain().at(promise["notify_name"], promise["notify_qq"]).message(" " + text)
+            await self.context.send_message(promise["umo"], chain)
+            logger.info(f"[琪露诺守约] 已兑现：@{promise['notify_name']} {text[:40]}")
+        except Exception as e:
+            logger.error(f"[琪露诺守约] 兑现失败: {e}", exc_info=True)
+
     @filter.llm_tool(name="list_my_groups")
     async def list_my_groups(self, event: AstrMessageEvent) -> str:
         """当对方问你在哪些群、或你自己想看看自己都在哪些群里时用。"""
@@ -1691,6 +1773,15 @@ class Main(Star):
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def _on_group_message_all(self, event: AstrMessageEvent):
+        # 守约检查要在所有群生效，且不管她本来会不会开口——被盯的人一说话就得兑现。
+        if self.promises.pending():
+            hit = self.promises.take_match(
+                str(event.get_sender_id()), event.unified_msg_origin
+            )
+            if hit:
+                self.mark_dirty("promises")
+                self._spawn(self._fulfill_promise(event, hit), "fulfill_promise")
+
         group_id = event.get_group_id()
         if group_id != self._daily_profile_group:
             return
@@ -2673,6 +2764,7 @@ class Main(Star):
             self._diag_task.cancel()
         await self.put_kv_data("state_data", self.state_manager.to_dict())
         await self.put_kv_data("mood_data", self.mood_manager.to_dict())
+        await self.put_kv_data("promises", self.promises.to_list())
         await self.put_kv_data("group_sessions", list(self._group_sessions))
         if self._enable_affinity:
             await self.affinity.save()
