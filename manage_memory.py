@@ -113,8 +113,16 @@ def menu_profile(profiles, uid, raw_data, key):
     while True:
         print(f"\n【{p.get('name', uid)}】")
         print(f"  relationship : {p.get('relationship','')}")
-        print(f"  traits       : {p.get('traits', [])}")
-        print(f"  events       : {p.get('important_events', [])}")
+        print(f"  traits       : {', '.join(p.get('traits', []))}")
+        evs = p.get("important_events", [])
+        if evs:
+            print("  events       :")
+            for i, e in enumerate(evs):
+                text = e.get("text", "") if isinstance(e, dict) else str(e)
+                imp = f" (重要度{e['importance']})" if isinstance(e, dict) and "importance" in e else ""
+                print(f"     [{i}] {text}{imp}")
+        else:
+            print("  events       : (无)")
         print("\n  r   编辑 relationship")
         print("  t   编辑 traits（逗号分隔）")
         print("  de <序号>  删除某条 event")
