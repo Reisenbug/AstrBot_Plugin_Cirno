@@ -63,6 +63,9 @@ COMPRESS_PROMPT = (
 )
 
 WEEK_SECONDS = 3 * 86400
+# L2 停用：按时间批次压缩，一条里塞四个人五件事，检索到就是噪音。
+# L1 自己有衰减和过期清理，不靠 L2 泄压。旧数据保留但不注入。
+L2_ENABLED = False
 L2_THRESHOLD = 15
 _DIGEST_DUP_THRESHOLD = 0.6   # 关键词 Jaccard 超过此值视为重复，不新增
 _DIGEST_PER_USER_MAX = 8      # 单个用户在 L2 里最多保留的 digest 条数
@@ -143,10 +146,9 @@ class RecallMemory:
         await self._cleanup_old()
         await self._migrate_old_format()
 
-        total = len(self._summaries) + len(self._digests)
         logger.info(
             f"回忆记忆已加载，L1={len(self._summaries)}条，"
-            f"L2={len(self._digests)}条，全局计数={self._global_count}"
+            f"L2={len(self._digests)}条(已停用)，全局计数={self._global_count}"
         )
 
     async def _migrate_old_format(self):
@@ -310,7 +312,7 @@ class RecallMemory:
         self._summaries.append(summary)
         logger.info(f"回忆记忆：L1 压缩完成，当前 {len(self._summaries)} 条")
 
-        if len(self._summaries) >= L2_THRESHOLD:
+        if L2_ENABLED and len(self._summaries) >= L2_THRESHOLD:
             await self._compress_l2()
 
         await self.save()
@@ -481,7 +483,7 @@ class RecallMemory:
         if not query_kw:
             return []
 
-        all_entries = self._summaries + self._digests
+        all_entries = self._summaries + (self._digests if L2_ENABLED else [])
         corpus_avg_len = sum(len(e.get("kw", [])) for e in all_entries) / max(len(all_entries), 1)
         now = time.time()
 
@@ -507,7 +509,7 @@ class RecallMemory:
         if top_k is None:
             top_k = self._top_k
 
-        all_entries = self._summaries + self._digests
+        all_entries = self._summaries + (self._digests if L2_ENABLED else [])
         if not all_entries:
             return []
 
