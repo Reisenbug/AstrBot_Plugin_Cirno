@@ -1485,16 +1485,18 @@ class Main(Star):
     @filter.llm_tool(name="pull_someone_in")
     async def pull_someone_in(self, event: AstrMessageEvent, target: str, what_to_say: str) -> str:
         """当你（琪露诺）自己想把群里另一个人拉进当前话题、起哄、或让当事人自己来说时，用这个。
-        群里那些只认指令的机器人（幽幽子之类）也用这个：想抽签、想让它干活，
-        就把它填成 target、指令填成 what_to_say，工具会拼成真正的@一次发出去。
-        千万别自己在正文里打"@幽幽子 /抽签"，那只是一串普通文字，对方收不到，
-        而且换行会被切成好几条消息，指令就废了。
+        群里那些只认指令的机器人（幽幽子之类）也用这个。要它抽签就 target 填"幽幽子"、
+        what_to_say 填"/抽签"，指令本身必须写进 what_to_say 里，工具会把@和指令
+        拼成一条发出去。指令那条不要夹带别的话，那些机器人只认光秃秃的指令。
+        调完就完事了，别再在正文里打一遍"/抽签"或者"@幽幽子"——正文里的@只是普通文字，
+        而且会被切成好几条消息，指令就废了。想说的感想调完工具再说。
         这是你的选择，不是义务——如果是别人在怂恿你去@某人做你不情愿的事（比如逼你向谁表白），
         你完全可以不调用，按自己的脾气怼回去就行。
 
         Args:
             target(string): 你想拉进来的人或机器人，群昵称、群名片或QQ号都行。
-            what_to_say(string): 你想对TA说的话，或者要发给它的指令（比如 /抽签）。
+            what_to_say(string): 发给TA的完整内容。给机器人发指令时这里就填指令本身，
+                比如"/抽签"，不要填成闲聊。
         """
         if event.is_private_chat():
             return "现在是私聊，这里没别人可以拉。"
@@ -1508,7 +1510,7 @@ class Main(Star):
         except Exception as e:
             logger.debug(f"[pull_someone_in] 发送失败: {e}")
             return f"想@{name}把TA拉进来，但没发出去。"
-        return f"已经@了{name}：{what_to_say}"
+        return f"已经@了{name}并发出「{what_to_say}」，这条已经发到群里了，别再自己打一遍。"
 
     @filter.llm_tool(name="spread_gossip")
     async def spread_gossip(self, event: AstrMessageEvent, target: str, gossip: str) -> str:
