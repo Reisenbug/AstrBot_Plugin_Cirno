@@ -124,6 +124,7 @@ class RecallMemory:
         self._digests: list[dict] = []
         self._key_event_callback = None
         self._llm_generate = None
+        self._compress_lock = asyncio.Lock()
         self._embed_provider = None
 
     def set_key_event_callback(self, callback):
@@ -212,6 +213,7 @@ class RecallMemory:
             buckets: dict[str, list[dict]] = {}
             for e in batch:
                 buckets.setdefault(e.get("gid", ""), []).append(e)
+            self._buffer = self._buffer[:-self._buffer_limit]
             for sub_batch in buckets.values():
                 asyncio.create_task(self._compress(sub_batch))
 
@@ -232,6 +234,12 @@ class RecallMemory:
         if not self._llm_generate:
             logger.warning("回忆记忆：无 LLM 生成函数，跳过压缩")
             return
+        # 多个会话的压缩任务并发跑，都要 append self._summaries 再整体 save，
+        # 不排队的话后保存的会盖掉前一条。
+        async with self._compress_lock:
+            await self._compress_locked(batch)
+
+    async def _compress_locked(self, batch: list[dict]):
 
         conv_lines = []
         for e in batch:

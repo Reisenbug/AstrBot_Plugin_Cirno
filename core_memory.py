@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 
@@ -36,6 +37,7 @@ class CoreMemory:
         self._threshold = update_threshold
         self._profiles: dict[str, dict] = {}
         self._counters: dict[str, int] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
 
     async def load(self):
         saved = await self._plugin.get_kv_data("core_memory", None)
@@ -171,8 +173,20 @@ class CoreMemory:
     def reset_counter(self, user_id: str):
         self._counters[str(user_id)] = 0
 
+    def _lock_for(self, user_id: str) -> asyncio.Lock:
+        lock = self._locks.get(user_id)
+        if lock is None:
+            lock = self._locks[user_id] = asyncio.Lock()
+        return lock
+
     async def update_profile_via_llm(self, user_id: str, recent_summary: str, context, nickname: str = ""):
         user_id = str(user_id)
+        # 同一个人的档案更新排队：读 profile 到写回之间隔着几秒的 LLM 调用，
+        # 并发时后写的会整个覆盖 important_events，把前一次的更新丢掉。
+        async with self._lock_for(user_id):
+            await self._update_profile_locked(user_id, recent_summary, context, nickname)
+
+    async def _update_profile_locked(self, user_id: str, recent_summary: str, context, nickname: str = ""):
         profile = self._profiles.get(user_id)
         if not profile:
             profile = {
