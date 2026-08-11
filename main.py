@@ -23,6 +23,7 @@ from .state_manager import CirnoStateManager
 from .mood_manager import CirnoMoodManager
 from .promise_store import PromiseStore
 from .situation_store import SituationStore
+from .quiet_store import QuietStore
 from .user_message_store import UserMessageStore
 from .slang_store import SlangStore
 from .group_message_store import GroupMessageStore
@@ -67,6 +68,7 @@ class Main(Star):
         self.mood_manager = CirnoMoodManager()
         self.promises = PromiseStore()
         self.situation = SituationStore()
+        self.quiet = QuietStore()
 
         self._enable_core_memory = memory_cfg.get("enable_core_memory", True)
         self._enable_recall_memory = memory_cfg.get("enable_recall_memory", True)
@@ -180,6 +182,12 @@ class Main(Star):
             self.situation.from_dict(saved_situation)
             if self.situation.text:
                 logger.info(f"琪露诺处境已恢复: {self.situation.text}")
+
+        saved_quiet = await self.get_kv_data("quiet_data", None)
+        if saved_quiet:
+            self.quiet.from_dict(saved_quiet)
+            if self.quiet.active():
+                logger.info(f"琪露诺静默名单已恢复: {len(self.quiet.active())} 条")
 
         saved_promises = await self.get_kv_data("promises", None)
         if saved_promises:
@@ -570,8 +578,45 @@ class Main(Star):
         # 记录会话活动时间，供卡死诊断用
         self._session_last_seen[event.unified_msg_origin] = time.time()
         await self._maybe_set_situation(event)
+        await self._maybe_set_quiet(event)
 
     _SITUATION_RE = re.compile(r"^\s*当前状况[:：,，\s]*(.*)$", re.DOTALL)
+
+    _QUIET_RE = re.compile(r"(别再?|不要|别去)?\s*(和|跟)\s*@?\S*?\s*(吵|聊|说话|对线|互动)")
+    _UNQUIET_RE = re.compile(r"(可以|能|去)?\s*(理|搭理|回)\s*@?\S*?\s*(了|吧)?$")
+
+    async def _maybe_set_quiet(self, event: AstrMessageEvent):
+        """主人说「别和@某人吵了」就掐断跟那个人的线，「可以理@某人了」解除。
+        目标从消息里的 At 取（第一个 At 通常是她自己，取最后一个）。"""
+        is_master = bool(MASTER_ID) and str(event.get_sender_id()) == MASTER_ID
+        if not (is_master or event.is_admin()):
+            return
+        raw = (event.message_str or "").strip()
+        if not raw or event.session.message_type != MessageType.GROUP_MESSAGE:
+            return
+        ats = re.findall(r"@([^(]+)\((\d+)\)", raw)
+        if not ats:
+            return
+        self_id = str(event.get_self_id())
+        targets = [(n.strip(), q) for n, q in ats if q != self_id]
+        if not targets:
+            return
+        name, qq = targets[-1]
+        umo = event.unified_msg_origin
+        if self._UNQUIET_RE.search(raw) or "解禁" in raw:
+            self.quiet.unmute(umo, qq)
+            logger.info(f"[琪露诺静默] 解除对 {name}({qq})")
+            await self.put_kv_data("quiet_data", self.quiet.to_dict())
+            return
+        if not self._QUIET_RE.search(raw):
+            return
+        m = re.search(r"(\d+)\s*(分钟|分|小时|h|min)", raw)
+        secs = 900.0
+        if m:
+            secs = float(m.group(1)) * (3600 if m.group(2) in ("小时", "h") else 60)
+        got = self.quiet.mute(umo, qq, secs)
+        logger.info(f"[琪露诺静默] 不再回应 {name}({qq})，{got // 60} 分钟")
+        await self.put_kv_data("quiet_data", self.quiet.to_dict())
 
     def _chat_provider_id(self, umo: str | None = None) -> str | None:
         """后台任务要用「聊天实际在用的」那个 provider。
@@ -618,6 +663,14 @@ class Main(Star):
     @filter.on_llm_request()
     async def inject_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         if (event.message_str or "").startswith("//"):
+            event.stop_event()
+            return
+        if self.quiet.is_muted(event.unified_msg_origin, str(event.get_sender_id())):
+            logger.info(
+                f"[琪露诺静默] 不理 {event.get_sender_name()}"
+                f"({event.get_sender_id()})，还剩 "
+                f"{self.quiet.remain(event.unified_msg_origin, str(event.get_sender_id())) // 60} 分钟"
+            )
             event.stop_event()
             return
         event.set_extra("cirno_llm_start", time.time())
@@ -2828,6 +2881,7 @@ class Main(Star):
         await self.put_kv_data("mood_data", self.mood_manager.to_dict())
         await self.put_kv_data("promises", self.promises.to_list())
         await self.put_kv_data("situation", self.situation.to_dict())
+        await self.put_kv_data("quiet_data", self.quiet.to_dict())
         await self.put_kv_data("group_sessions", list(self._group_sessions))
         if self._enable_affinity:
             await self.affinity.save()
