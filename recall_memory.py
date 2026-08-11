@@ -428,14 +428,15 @@ class RecallMemory:
     def _group_factor(
         self, entry: dict, current_user_id: str | None, current_group_id: str | None
     ) -> float:
-        """跨场景隔离：外群记忆降权，避免私聊/本群里翻出无关群的往事。
-        例外：记忆里含当前对话者时不降权（这个人确实参与过那段往事）。"""
-        entry_gid = entry.get("gid", "")
-        if not entry_gid or entry_gid == current_group_id:
+        """跨场景硬隔离。同会话满权重；别的会话只有当事人在场才捞得出来，否则直接屏蔽。
+        私聊 gid 为空，以前当"通用记忆"满权重注入，私聊剧情因此漏进了所有群。"""
+        entry_gid = entry.get("gid", "") or ""
+        cur_gid = current_group_id or ""
+        if entry_gid == cur_gid:
             return 1.0
         if current_user_id and current_user_id in entry.get("users", []):
-            return 1.0
-        return 0.3
+            return 0.5
+        return 0.0
 
     def _score_entry_bm25(
         self, query_kw: list[str], entry: dict, corpus_avg_len: float,
@@ -558,6 +559,8 @@ class RecallMemory:
             time_decay = math.exp(-age_hours / (24 * 7))
             user_bonus = 0.2 if current_user_id and current_user_id in entry.get("users", []) else 0.0
             group_factor = self._group_factor(entry, current_user_id, current_group_id)
+            if group_factor <= 0:
+                continue
             score = (cosine * 0.6 + time_decay * 0.2 + user_bonus * 0.2) * group_factor
             vec_scored.append((score, entry))
         vec_scored.sort(key=lambda x: x[0], reverse=True)
