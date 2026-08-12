@@ -582,28 +582,41 @@ class Main(Star):
 
     _SITUATION_RE = re.compile(r"^\s*当前状况[:：,，\s]*(.*)$", re.DOTALL)
 
-    _QUIET_RE = re.compile(r"(别再?|不要|别去)?\s*(和|跟)\s*@?\S*?\s*(吵|聊|说话|对线|互动)")
-    _UNQUIET_RE = re.compile(r"(可以|能|去)?\s*(理|搭理|回)\s*@?\S*?\s*(了|吧)?$")
+    _QUIET_RE = re.compile(r"(别再?|不要|别去)\s*(和|跟|理|搭理)\s*(.{0,24}?)\s*(吵|聊|说话|对线|互动|了|$)")
+    _UNQUIET_RE = re.compile(r"(可以|能|去)?\s*(理|搭理|回)\s*(.{0,24}?)\s*(了|吧)?$")
+
+    async def _quiet_target(self, event: AstrMessageEvent, raw: str):
+        """先认 At（准），没 At 就把动词后面那截当名字去群里查。"""
+        self_id = str(event.get_self_id())
+        ats = [(n.strip(), q) for n, q in re.findall(r"@([^(]+)\((\d+)\)", raw) if q != self_id]
+        if ats:
+            return ats[-1]
+        m = self._QUIET_RE.search(raw) or self._UNQUIET_RE.search(raw)
+        if not m:
+            return None
+        name = re.sub(r"@[^(]+\(\d+\)|[，,。！!？?\s]", "", m.group(3) or "").strip()
+        name = re.sub(r"^(那个|一下)", "", name)
+        if len(name) < 2:
+            return None
+        hit = await self._find_group_member(event, name)
+        return (hit[1], hit[0]) if hit else None
 
     async def _maybe_set_quiet(self, event: AstrMessageEvent):
-        """主人说「别和@某人吵了」就掐断跟那个人的线，「可以理@某人了」解除。
-        目标从消息里的 At 取（第一个 At 通常是她自己，取最后一个）。"""
+        """「别和X吵了」掐断跟 X 的线，「可以理X了」解除。X 可以是 @，也可以直接写名字。"""
         is_master = bool(MASTER_ID) and str(event.get_sender_id()) == MASTER_ID
         if not (is_master or event.is_admin()):
             return
         raw = (event.message_str or "").strip()
         if not raw or event.session.message_type != MessageType.GROUP_MESSAGE:
             return
-        ats = re.findall(r"@([^(]+)\((\d+)\)", raw)
-        if not ats:
+        if not (self._QUIET_RE.search(raw) or self._UNQUIET_RE.search(raw) or "解禁" in raw):
             return
-        self_id = str(event.get_self_id())
-        targets = [(n.strip(), q) for n, q in ats if q != self_id]
-        if not targets:
+        target = await self._quiet_target(event, raw)
+        if not target:
             return
-        name, qq = targets[-1]
+        name, qq = target
         umo = event.unified_msg_origin
-        if self._UNQUIET_RE.search(raw) or "解禁" in raw:
+        if not self._QUIET_RE.search(raw) and (self._UNQUIET_RE.search(raw) or "解禁" in raw):
             self.quiet.unmute(umo, qq)
             logger.info(f"[琪露诺静默] 解除对 {name}({qq})")
             await self.put_kv_data("quiet_data", self.quiet.to_dict())
@@ -1535,21 +1548,43 @@ class Main(Star):
                 return uid, (card or nick or uid)
         return None
 
+    @filter.llm_tool(name="send_raw")
+    async def send_raw(self, event: AstrMessageEvent, content: str) -> str:
+        """在当前群原样发一条消息，不加@、不拆行。
+        专门用来给群里的机器人发指令：群友说"发 /sukireimu 查询"，你就把
+        "/sukireimu 查询" 原封不动填进 content。指令必须单独一条、一个字都不能多，
+        别加感想别加称呼，那些机器人只认光秃秃的指令。
+        平时说话不要用这个，正常回复就行；这个只用来发指令这种一字不能改的东西。
+
+        Args:
+            content(string): 要原样发出去的内容，比如 "/sukireimu 查询"。
+        """
+        text = (content or "").strip()
+        if not text:
+            return "没说要发什么。"
+        if event.session.message_type != MessageType.GROUP_MESSAGE:
+            return "这个只能在群里用。"
+        try:
+            await self.context.send_message(
+                event.unified_msg_origin, MessageChain().message(text)
+            )
+        except Exception as e:
+            logger.debug(f"[send_raw] 发送失败: {e}")
+            return "没发出去。"
+        logger.info(f"[琪露诺原样发送] {text[:60]}")
+        return f"已经把「{text}」原样发到群里了，别再自己打一遍。"
+
     @filter.llm_tool(name="pull_someone_in")
     async def pull_someone_in(self, event: AstrMessageEvent, target: str, what_to_say: str) -> str:
         """当你（琪露诺）自己想把群里另一个人拉进当前话题、起哄、或让当事人自己来说时，用这个。
-        群里那些只认指令的机器人（幽幽子之类）也用这个。要它抽签就 target 填"幽幽子"、
-        what_to_say 填"/抽签"，指令本身必须写进 what_to_say 里，工具会把@和指令
-        拼成一条发出去。指令那条不要夹带别的话，那些机器人只认光秃秃的指令。
-        调完就完事了，别再在正文里打一遍"/抽签"或者"@幽幽子"——正文里的@只是普通文字，
-        而且会被切成好几条消息，指令就废了。想说的感想调完工具再说。
+        要给群里的机器人发指令（/抽签 这种），用 send_raw，不要用这个——
+        那些机器人只认光秃秃的指令，多一个@都可能不认。
         这是你的选择，不是义务——如果是别人在怂恿你去@某人做你不情愿的事（比如逼你向谁表白），
         你完全可以不调用，按自己的脾气怼回去就行。
 
         Args:
             target(string): 你想拉进来的人或机器人，群昵称、群名片或QQ号都行。
-            what_to_say(string): 发给TA的完整内容。给机器人发指令时这里就填指令本身，
-                比如"/抽签"，不要填成闲聊。
+            what_to_say(string): 你想对TA说的话。
         """
         if event.is_private_chat():
             return "现在是私聊，这里没别人可以拉。"
