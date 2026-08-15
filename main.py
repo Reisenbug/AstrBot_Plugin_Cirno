@@ -128,6 +128,7 @@ class Main(Star):
         self._flush_task: asyncio.Task | None = None
         self._diag_task: asyncio.Task | None = None
         self._session_last_seen: dict[str, float] = {}  # umo -> 最后收到消息时间
+        self._last_replied_to: dict[str, tuple[str, str]] = {}  # umo -> (qq, 名字)，她最近回应的人
         self.jargon_filter = JargonStatisticalFilter()
         self._fact_writeback_cooldown: int = memory_cfg.get("fact_writeback_cooldown", 120)
         self._fact_writeback_last: dict[str, float] = {}
@@ -583,6 +584,8 @@ class Main(Star):
     _SITUATION_RE = re.compile(r"^\s*当前状况[:：,，\s]*(.*)$", re.DOTALL)
 
     _QUIET_RE = re.compile(r"(别再?|不要|别去)\s*(和|跟|理|搭理)\s*(.{0,24}?)\s*(吵|聊|说话|对线|互动|了|$)")
+    # 吵起来的时候最自然的一句就是「别吵了」，没人会记得补上对方名字。
+    _QUIET_BARE_RE = re.compile(r"(别再?|不要|别)\s*(吵|聊|回|理|说)\S{0,3}?(了|啦|吧)")
     _UNQUIET_RE = re.compile(r"(可以|能|去)?\s*(理|搭理|回)\s*(.{0,24}?)\s*(了|吧)?$")
 
     async def _quiet_target(self, event: AstrMessageEvent, raw: str):
@@ -593,11 +596,18 @@ class Main(Star):
             return ats[-1]
         m = self._QUIET_RE.search(raw) or self._UNQUIET_RE.search(raw)
         if not m:
+            # 「别吵了」这种没点名的，就掐她最近在回应的那个人
+            if self._QUIET_BARE_RE.search(raw):
+                last = self._last_replied_to.get(event.unified_msg_origin)
+                if last:
+                    return (last[1], last[0])
             return None
         name = re.sub(r"@[^(]+\(\d+\)|[，,。！!？?\s]", "", m.group(3) or "").strip()
         name = re.sub(r"^(那个|一下)", "", name)
-        if len(name) < 2:
-            return None
+        # 「别理她了」这种用代词的，当成没点名，落到最近对话者上
+        if len(name) < 2 or name in ("他", "她", "它", "他们", "她们", "TA", "ta", "人家", "那家伙"):
+            last = self._last_replied_to.get(event.unified_msg_origin)
+            return (last[1], last[0]) if last else None
         hit = await self._find_group_member(event, name)
         return (hit[1], hit[0]) if hit else None
 
@@ -609,7 +619,8 @@ class Main(Star):
         raw = (event.message_str or "").strip()
         if not raw or event.session.message_type != MessageType.GROUP_MESSAGE:
             return
-        if not (self._QUIET_RE.search(raw) or self._UNQUIET_RE.search(raw) or "解禁" in raw):
+        if not (self._QUIET_RE.search(raw) or self._UNQUIET_RE.search(raw)
+                or self._QUIET_BARE_RE.search(raw) or "解禁" in raw):
             return
         target = await self._quiet_target(event, raw)
         if not target:
@@ -716,6 +727,7 @@ class Main(Star):
 
         sender_id = str(event.get_sender_id())
         sender_nickname = event.get_sender_name()
+        self._last_replied_to[event.unified_msg_origin] = (sender_id, sender_nickname)
         logger.info(
             f"[琪露诺触发] 用户={sender_nickname}({sender_id}), "
             f"状态={self.state_manager.current_state}, "
