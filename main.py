@@ -1034,7 +1034,13 @@ class Main(Star):
                 "什么乱七八糟的符号啊！不懂！",
                 "你找错人啦，最强的我可不是用来算题的！",
             ])
-        if not bot_reply.strip():
+        # 正文里打的 @ 被框架剥掉后会留下零宽空格，切条时那行就成了一条空消息发出去。
+        # strip() 去不掉 U+200B，得显式清。
+        bot_reply = re.sub(r"[\u200b-\u200f\u2060\ufeff]", "", bot_reply)
+        bot_reply = "\n".join(
+            line for line in bot_reply.split("\n") if line.strip()
+        ).strip()
+        if not bot_reply:
             bot_reply = random.choice(["哼。", "……怎么了？", "嗯？"])
         if bot_reply != (resp.completion_text or ""):
             resp.completion_text = bot_reply
@@ -1552,13 +1558,34 @@ class Main(Star):
             logger.debug(f"[琪露诺社交] 群成员查询失败: {e}")
             return None
         kw = keyword.strip().lower()
+        # 昵称里常夹着括号、空格、emoji，"灵梦bot" 匹配不到 "博丽灵梦（bot)"。
+        # 剥掉这些再比，让人怎么念就怎么找得到。
+        kw_bare = self._bare_name(kw)
+        best = None
         for m in members or []:
             uid = str(m.get("user_id", ""))
             card = m.get("card", "") or ""
             nick = m.get("nickname", "") or ""
-            if kw == uid or kw in card.lower() or kw in nick.lower():
+            if kw == uid:
                 return uid, (card or nick or uid)
-        return None
+            for field in (card, nick):
+                if not field:
+                    continue
+                fb = self._bare_name(field)
+                if kw_bare and (kw_bare == fb or kw_bare in fb):
+                    # 完全相等优先，避免"灵梦"撞上多个人时随便挑一个
+                    if kw_bare == fb:
+                        return uid, (card or nick or uid)
+                    if best is None:
+                        best = (uid, card or nick or uid)
+        return best
+
+    _BARE_RE = re.compile(r"[\s()（）\[\]【】<>《》「」『』~～!！?？.。,，、_\-—+*#@:：;；\"'|/\\]")
+
+    @classmethod
+    def _bare_name(cls, text: str) -> str:
+        """去掉昵称里的标点空格，只留可念的部分。"""
+        return cls._BARE_RE.sub("", (text or "").lower())
 
     @filter.llm_tool(name="send_raw")
     async def send_raw(self, event: AstrMessageEvent, content: str) -> str:
