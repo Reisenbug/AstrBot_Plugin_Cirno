@@ -14,7 +14,7 @@ from astrbot.core.message.components import Image, Poke
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.message_type import MessageType
 
-from .affinity import AffinityManager
+from .emotion import EmotionManager
 from .core_memory import CoreMemory
 from .jargon_filter import JargonStatisticalFilter
 from .meme_sender import MemeSelector
@@ -89,12 +89,8 @@ class Main(Star):
         self._show_full_prompt = debug_cfg.get("show_full_prompt", False)
 
         affinity_cfg = config.get("affinity_settings", {})
-        self._enable_affinity = affinity_cfg.get("enable", True)
-        self.affinity = AffinityManager(
-            plugin=self,
-            boredom_window=affinity_cfg.get("boredom_window", 300),
-            boredom_threshold=affinity_cfg.get("boredom_threshold", 12),
-        )
+        self._enable_emotion = affinity_cfg.get("enable", True)
+        self.emotion = EmotionManager(plugin=self)
         self._prank_duration_turns = affinity_cfg.get("prank_duration_turns", 5)
 
         meme_cfg = config.get("meme_settings", {})
@@ -129,6 +125,7 @@ class Main(Star):
         self._diag_task: asyncio.Task | None = None
         self._session_last_seen: dict[str, float] = {}  # umo -> 最后收到消息时间
         self._last_replied_to: dict[str, tuple[str, str]] = {}  # umo -> (qq, 名字)，她最近回应的人
+        self._last_seen: dict[str, float] = {}  # qq -> 上次说话时间，久别重逢用
         self.jargon_filter = JargonStatisticalFilter()
         self._fact_writeback_cooldown: int = memory_cfg.get("fact_writeback_cooldown", 120)
         self._fact_writeback_last: dict[str, float] = {}
@@ -215,13 +212,19 @@ class Main(Star):
             self._global_notes = saved_notes
             logger.info(f"全局笔记已加载，共 {len(self._global_notes)} 条")
 
-        if self._enable_affinity:
-            await self.affinity.load()
+        if self._enable_emotion:
+            await self.emotion.load()
+        saved_seen = await self.get_kv_data("last_seen", None)
+        if isinstance(saved_seen, dict):
+            self._last_seen = {
+                str(k): float(v) for k, v in saved_seen.items()
+                if isinstance(v, (int, float))
+            }
         if self._enable_core_memory:
             await self.core_memory.load()
         if self._enable_recall_memory:
             self.recall_memory.set_llm_generate(self._recall_llm_generate)
-            if self._enable_affinity:
+            if self._enable_emotion:
                 self.recall_memory.set_key_event_callback(self._on_buffer_key_event)
             await self.recall_memory.load()
             _mem_cfg = self.config.get("memory_settings", {})
@@ -433,8 +436,10 @@ class Main(Star):
         dirty = self._dirty
         self._dirty = set()
         try:
-            if "affinity" in dirty:
-                await self.affinity.save()
+            if "emotion" in dirty:
+                await self.emotion.save()
+            if "last_seen" in dirty:
+                await self.put_kv_data("last_seen", self._last_seen)
             if "recall" in dirty:
                 await self.recall_memory.save()
             if "core" in dirty:
@@ -791,19 +796,21 @@ class Main(Star):
             req.system_prompt += MASTER_PROMPT
         _snap("对话者身份")
 
-        if self._enable_affinity:
-            req.system_prompt += self.affinity.build_status_prompt(sender_id)
-            composite = self.affinity.get_composite(sender_id)
-            if composite >= 76:
-                ud = self.affinity.get_user_data(sender_id)
-                idle_hours = (time.time() - ud.get("last_ts", time.time())) / 3600
-                if idle_hours >= 12:
-                    hint = "心里其实有点想这个人，虽然嘴上不会说" if idle_hours < 48 else "好久没见到这个人了，心里有种说不出的复杂感觉"
-                    req.system_prompt += f"\n【久别】已经{int(idle_hours)}小时没和这个人说话了，{hint}。"
-                warmth = self.affinity.get_warmth(sender_id)
-                if warmth is not None and warmth < 0.4:
-                    req.system_prompt += "\n【察觉】最近几次互动你感觉对方状态不太对劲，可以主动关心一下，但别太直接。"
-        _snap("好感度+久别察觉")
+        # 久别重逢：只看多久没说话。原来还挂着"好感度>=76"的门槛和 warmth 察觉，
+        # 前者是随机数，后者的历史不存盘、重启后恒为 None。
+        last_seen = self._last_seen.get(sender_id)
+        if last_seen:
+            idle_hours = (time.time() - last_seen) / 3600
+            if idle_hours >= 12 and self.core_memory.get_profile(sender_id):
+                hint = (
+                    "心里其实有点想这个人，虽然嘴上不会说"
+                    if idle_hours < 48
+                    else "好久没见到这个人了，心里有种说不出的复杂感觉"
+                )
+                req.system_prompt += f"\n【久别】已经{int(idle_hours)}小时没和这个人说话了，{hint}。"
+        self._last_seen[sender_id] = time.time()
+        self.mark_dirty("last_seen")
+        _snap("久别")
 
         # 4. 相关的人
         if self._enable_core_memory:
@@ -854,8 +861,7 @@ class Main(Star):
                 "就一句话，插完就完，别长篇。"
             )
         elif is_private:
-            level = self.affinity.get_level(sender_id) if self._enable_affinity else "普通"
-            is_close = level in ("喜欢", "很喜欢")
+            is_close = self._feels_close(sender_id)
             private_prompt = (
                 "\n你们在私聊，没有旁观者。说话比群里更真实，少一点跳脱和夸张，多一点真心话。"
                 "对方特意找你说话，你会在意「他为什么找我」，即使不说出口。"
@@ -948,8 +954,8 @@ class Main(Star):
         # 正向身份重锚：放在生成点最近处，对抗长上下文里早期人格指令的注意力衰减。
         req.system_prompt += "\n现在，就用琪露诺自己的语气、凭此刻的心情，说一句她会说的话。"
         _snap("身份重锚")
-        if self._enable_affinity:
-            req.system_prompt += self.affinity.build_rating_prompt()
+        if self._enable_emotion:
+            req.system_prompt += self.emotion.build_rating_prompt()
         _snap("评分指令")
 
         total = len(req.system_prompt or "")
@@ -1046,15 +1052,14 @@ class Main(Star):
             resp.completion_text = bot_reply
 
         if bot_reply:
-            sentiment, intensity = self.affinity.peek_sentiment(bot_reply)
+            sentiment, intensity = self.emotion.peek_sentiment(bot_reply)
             if sentiment:
                 self.mood_manager.mark_feeling(sentiment, intensity)
                 self.mark_dirty("mood")
 
         valence_shift: float | None = None
-        interaction_type: str | None = None
-        if self._enable_affinity and bot_reply:
-            cleaned, valence_shift, reason, interaction_type = self.affinity.extract_inner(bot_reply)
+        if self._enable_emotion and bot_reply:
+            cleaned, valence_shift, reason = self.emotion.extract_inner(bot_reply)
             if cleaned != bot_reply:
                 if not cleaned.strip():
                     cleaned = random.choice(["哼。", "……怎么了？", "嗯？"])
@@ -1064,19 +1069,14 @@ class Main(Star):
             if valence_shift is not None:
                 from .cirno_states import CIRNO_STATES
                 cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
-                self.affinity.update_emotion(valence_shift, cat)
-                self.affinity.update_affinity(sender_id, valence_shift, interaction_type)
+                self.emotion.update_emotion(valence_shift, cat)
                 logger.info(
-                    f"[琪露诺情绪] v={self.affinity.valence:.2f} a={self.affinity.arousal:.2f} "
-                    f"vuln={self.affinity.vulnerability:.2f} shift={valence_shift:.2f} "
-                    f"reason={reason} | "
-                    f"[好感度] {sender_name}({sender_id}): "
-                    f"composite={self.affinity.get_composite(sender_id):.1f} "
-                    f"等级={self.affinity.get_level(sender_id)}"
+                    f"[琪露诺情绪] v={self.emotion.valence:.2f} a={self.emotion.arousal:.2f} "
+                    f"vuln={self.emotion.vulnerability:.2f} shift={valence_shift:.2f} "
+                    f"reason={reason}"
                 )
-
-                self.affinity.increment_event_counter(sender_id)
-                self.affinity.record_interaction(sender_id)
+                self.emotion.increment_event_counter(sender_id)
+                self.mark_dirty("emotion")
 
         if not user_msg or not bot_reply:
             return
@@ -1164,10 +1164,10 @@ class Main(Star):
                 event.set_extra("cirno_meme_path", meme_path)
 
         if (
-            self._enable_affinity
+            self._enable_emotion
             and event.session.message_type == MessageType.GROUP_MESSAGE
         ):
-            valence = self.affinity.valence
+            valence = self.emotion.valence
             chance = 0.01 + max(0, (0.5 - valence)) * 0.08
             if random.random() < chance:
                 event.set_extra("cirno_poke", True)
@@ -1199,19 +1199,16 @@ class Main(Star):
                 if not self._prank_state.get("ending") and valence_shift is not None and valence_shift < 0.4:
                     self._prank_state["escalation"] = self._prank_state.get("escalation", 0) + 1
                     logger.info(f"[琪露诺恶作剧] 对方反应激烈，升级={self._prank_state['escalation']}")
-        elif self._critique_state is None and self._enable_affinity and event.session.message_type == MessageType.GROUP_MESSAGE:
+        elif self._critique_state is None and self._enable_emotion and event.session.message_type == MessageType.GROUP_MESSAGE:
             self._maybe_enter_prank(sender_id)
 
     def _maybe_enter_prank(self, sender_id: str):
-        valence = self.affinity.valence
-        composite = self.affinity.get_composite(sender_id)
+        valence = self.emotion.valence
         # 心情好才有恶作剧的兴致，心情差就算了
         if valence < 0.55:
             return
-        # 基础概率由心情决定，好感度作为乘数（好感高概率更高，但低好感也有机会）
         mood_factor = (valence - 0.55) / 0.45  # 0~1
-        affinity_factor = 0.3 + 0.7 * (composite / 100.0)  # 0.3~1.0
-        chance = mood_factor * affinity_factor * 0.12
+        chance = mood_factor * 0.08
         if random.random() < chance:
             imitate_style = ""
             records = self.user_msg_store.get_recent(sender_id, limit=30)
@@ -1223,7 +1220,7 @@ class Main(Star):
             duration_info = f"{turns_left}轮" if turns_left is not None else f"{int(state['expires_at'] - time.time()) // 60}min"
             logger.info(
                 f"[琪露诺恶作剧] 进入恶作剧模式! "
-                f"valence={valence:.2f} composite={composite:.0f} "
+                f"valence={valence:.2f} "
                 f"chance={chance:.2%} duration={duration_info} "
                 f"pool={state['behavior_pool']} imitate={'有' if imitate_style else '无'}"
             )
@@ -1337,7 +1334,7 @@ class Main(Star):
             msg_lines.append(f"琪露诺：{entry.get('reply', '')}")
         messages_text = "\n".join(msg_lines)
 
-        prompt_text = self.affinity.build_key_event_prompt(nickname, messages_text)
+        prompt_text = self.emotion.build_key_event_prompt(nickname, messages_text)
 
         try:
             provider_id = self._chat_provider_id()
@@ -1358,28 +1355,24 @@ class Main(Star):
         if not llm_resp or not llm_resp.completion_text:
             return
 
-        result = self.affinity.parse_key_event_result(llm_resp.completion_text)
+        result = self.emotion.parse_key_event_result(llm_resp.completion_text)
         if not result:
             logger.info(f"[琪露诺关键事件] {nickname}({user_id}): 无关键事件")
             return
 
-        self.affinity.update_key_event(user_id, result["dimension"], result["delta"])
+        weight = result.get("weight", 0.05)
         logger.info(
             f"[琪露诺关键事件] {nickname}({user_id}): "
-            f"event={result['event']}, dim={result['dimension']}, "
-            f"delta={result['delta']:+.2f}"
+            f"event={result['event']}, weight={weight:+.2f}"
         )
 
         if result.get("memory") and self._enable_core_memory:
-            is_neg = result.get("delta", 0) < 0
-            importance = max(1, min(10, int(abs(result.get("delta", 0.05)) * 67)))
+            importance = max(1, min(10, int(abs(weight) * 67)))
             await self.core_memory.add_important_event(
                 user_id, result["memory"], nickname=nickname,
-                is_negative=is_neg, importance=importance
+                is_negative=weight < 0, importance=importance
             )
             logger.info(f"[琪露诺关键事件] 写入核心记忆(importance={importance}): {result['memory']}")
-
-        self.mark_dirty("affinity")
 
     async def _extract_and_memorize(self, user_id: str, user_name: str, user_msg: str, bot_reply: str):
         try:
@@ -1741,7 +1734,7 @@ class Main(Star):
                 prompt=f"[{promise['watch_name']}冒头了，去喊{promise['notify_name']}]",
                 system_prompt=system_prompt,
             )
-            text, _, _, _ = self.affinity.extract_inner(
+            text, _, _ = self.emotion.extract_inner(
                 (getattr(llm_resp, "completion_text", "") or "").strip()
             )
             text = self._strip_roleplay(text)
@@ -2053,18 +2046,24 @@ class Main(Star):
 
     _FAREWELL_KEYWORDS = ("晚安", "睡了", "睡觉", "再见", "拜拜", "拜了", "先这样", "明天见", "回见", "下次聊", "去忙", "byebye", "bye", "88", "撤了", "闪了", "下播")
 
+    def _feels_close(self, user_id: str) -> bool:
+        """她跟这个人熟不熟。看核心记忆里有没有写下过对他的"感觉"——
+        原来这里读的是四维好感度算出来的等级，那个数是随机漂移出来的。"""
+        if not self._enable_core_memory:
+            return False
+        prof = self.core_memory.get_profile(user_id)
+        return bool(prof and prof.get("relationship"))
+
     def _speak_up_urge(self, user_id: str) -> float:
         """她此刻'想开口'的冲动 0~1。克制为底（基线低），情绪为变量（arousal/脆弱越高越想说），
         对喜欢的人闸门更松。返回值越高越可能自发开口、且开口越放得开。"""
-        if not self._enable_affinity:
+        if not self._enable_emotion:
             return 0.25
-        arousal = self.affinity.arousal          # 情绪烈度（0.5 为平静基准）
-        vuln = self.affinity.vulnerability       # 脆弱、想找人的程度
-        level = self.affinity.get_level(user_id)
-        closeness = {"很喜欢": 0.15, "喜欢": 0.10}.get(level, 0.0)
+        arousal = self.emotion.arousal          # 情绪烈度（0.5 为平静基准）
+        vuln = self.emotion.vulnerability       # 脆弱、想找人的程度
         # 克制为底：平静时（arousal≈0.5）开口冲动几乎为零，只有情绪明显高过平静、
-        # 或心里发软想找人时，才把闸门推过门槛。亲疏只是微调，不主导。
-        urge = 0.55 * max(0.0, arousal - 0.5) + 0.45 * vuln + closeness
+        # 或心里发软想找人时，才把闸门推过门槛。
+        urge = 0.55 * max(0.0, arousal - 0.5) + 0.45 * vuln
         return max(0.0, min(1.0, urge))
 
     async def _private_followup_flow(
@@ -2118,7 +2117,6 @@ class Main(Star):
             return ""
 
         sender_prompt = self.core_memory.build_sender_prompt(user_id, user_name) if self._enable_core_memory else f"对方叫{user_name}"
-        affinity_prompt = self.affinity.build_status_prompt(user_id) if self._enable_affinity else ""
 
         # 喂全料：让重新醒来的'她'像隔了会儿又开口的同一个人，而不是冷启动。
         # 既给最近几轮做上下文，又单独点明'你刚说出口的那句完整原文'——续话要接的就是它，
@@ -2149,7 +2147,7 @@ class Main(Star):
 
         prompt = (
             f"{recent_block}"
-            f"{sender_prompt}{affinity_prompt}"
+            f"{sender_prompt}"
             f"{scene_block}\n"
             f"现在的情况：{gap}。{farewell_note}\n\n"
             "他没有催你、没有新消息——是你自己心里有没有想说的。"
@@ -2178,8 +2176,8 @@ class Main(Star):
         if not resp or not resp.completion_text:
             return ""
         text = resp.completion_text.strip()
-        if self._enable_affinity:
-            text, _, _, _ = self.affinity.extract_inner(text)
+        if self._enable_emotion:
+            text, _, _ = self.emotion.extract_inner(text)
         text = text.strip()
         # 她选择不开口
         if not text or text.strip("。！.!？?「」\"' ") in ("沉默", "（沉默）", "(沉默)"):
@@ -2239,8 +2237,8 @@ class Main(Star):
         if not resp or not resp.completion_text:
             return
         text = resp.completion_text.strip()
-        if self._enable_affinity:
-            text, _, _, _ = self.affinity.extract_inner(text)
+        if self._enable_emotion:
+            text, _, _ = self.emotion.extract_inner(text)
 
         result = await self._post_to_qzone(text)
         if result.get("success"):
@@ -2314,11 +2312,10 @@ class Main(Star):
             if now - last_ts < self._private_min_idle:
                 continue
 
-            # 好感度检查：至少普通才主动找
-            if self._enable_affinity:
-                composite = self.affinity.get_composite(user_id)
-                if composite < 46:
-                    continue
+            # 只主动找有印象的人（核心记忆里写下过"感觉"的），陌生人不去打扰
+            prof = self.core_memory.get_profile(user_id) if self._enable_core_memory else None
+            if not prof or not prof.get("relationship"):
+                continue
 
             # 生成动机：从群聊最近话题或状态取
             motivation = self._build_private_motivation(user_id)
@@ -2373,13 +2370,11 @@ class Main(Star):
         base_system_prompt = persona.get("prompt", "") if persona else ""
 
         sender_prompt = self.core_memory.build_sender_prompt(user_id, "") if self._enable_core_memory else ""
-        affinity_prompt = self.affinity.build_status_prompt(user_id) if self._enable_affinity else ""
 
         system_prompt = "\n".join([
             base_system_prompt,
             self.state_manager.get_prompt_injection(),
             sender_prompt,
-            affinity_prompt,
             ABSOLUTE_RULES,
             "\n你们在私聊，没有旁观者。你突然想找这个人说说话。"
             "说一两句自然的开场，不要太刻意，像是真的想起他了。"
@@ -2402,8 +2397,8 @@ class Main(Star):
             return
 
         text = resp.completion_text
-        if self._enable_affinity:
-            text, _, _, _ = self.affinity.extract_inner(text)
+        if self._enable_emotion:
+            text, _, _ = self.emotion.extract_inner(text)
 
         try:
             msg = MessageChain().message(text)
@@ -2462,8 +2457,8 @@ class Main(Star):
             return
 
         text = llm_resp.completion_text
-        if self._enable_affinity:
-            cleaned, _, _, _ = self.affinity.extract_inner(text)
+        if self._enable_emotion:
+            cleaned, _, _ = self.emotion.extract_inner(text)
             text = cleaned
 
         msg = MessageChain().message(text)
@@ -2510,9 +2505,8 @@ class Main(Star):
 
         from .cirno_states import CIRNO_STATES
         cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
-        level = self.affinity.get_level(sender_id) if self._enable_affinity else "普通"
-        is_liked = level in ("喜欢", "很喜欢")
-        is_disliked = level in ("无视", "讨厌")
+        is_liked = self._feels_close(sender_id)
+        is_disliked = False
 
         # 第4次及以上：固定沉默
         if count >= 4:
@@ -2525,7 +2519,7 @@ class Main(Star):
             self._poke_streaks[sender_id]["angry"] = True
 
         # 第1-3次：LLM动态生成
-        reply = await self._generate_poke_reply(sender_id, sender_name, count, level, is_liked, is_disliked, is_rest=(cat == "rest"))
+        reply = await self._generate_poke_reply(sender_id, sender_name, count, is_liked, is_disliked, is_rest=(cat == "rest"))
         yield event.plain_result(reply)
 
         poke_back_chance = 1.0 if count >= 3 else 0.2
@@ -2544,7 +2538,7 @@ class Main(Star):
 
     async def _generate_poke_reply(
         self, sender_id: str, sender_name: str,
-        count: int, level: str, is_liked: bool, is_disliked: bool,
+        count: int, is_liked: bool, is_disliked: bool,
         is_rest: bool = False,
     ) -> str:
         if is_rest:
@@ -2566,8 +2560,6 @@ class Main(Star):
 
         state_label = self.state_manager.get_prompt_injection()[:40]
         sender_prompt = self.core_memory.build_sender_prompt(sender_id, sender_name) if self._enable_core_memory else f"对方叫{sender_name}"
-        affinity_prompt = self.affinity.build_status_prompt(sender_id) if self._enable_affinity else ""
-        warmth = self.affinity.get_warmth(sender_id) if self._enable_affinity else None
 
         if is_rest:
             if count == 1:
@@ -2588,12 +2580,6 @@ class Main(Star):
             else:
                 situation = "对方戳了你三下，一句话不说。你开始真的不耐烦了，语气敷衍。"
 
-        warmth_hint = ""
-        if warmth is not None:
-            if warmth < 0.4:
-                warmth_hint = "最近你们互动感觉有点冷，你对他没那么热情。"
-            elif warmth > 0.65:
-                warmth_hint = "最近互动挺愉快的，心里对他印象不错。"
 
         angles = [
             "假装没被戳到，自顾自说一句完全不相关的事",
@@ -2617,9 +2603,9 @@ class Main(Star):
             ]
         angle = random.choice(angles)
         prompt = (
-            f"{situation}{warmth_hint}\n"
+            f"{situation}\n"
             f"当前状态：{state_label}\n"
-            f"{sender_prompt}{affinity_prompt}\n\n"
+            f"{sender_prompt}\n\n"
             f"用琪露诺的口气回应这次戳一戳。这次的反应角度：{angle}。\n"
             "要求：只说一句话，简短（15字以内），符合上面的情绪和关系。\n"
             "直接输出那句话，不加任何前缀。"
@@ -2638,8 +2624,8 @@ class Main(Star):
             return random.choice(fallback_pool.get(count, ["..."]))
 
         text = resp.completion_text.strip()
-        if self._enable_affinity:
-            text, _, _, _ = self.affinity.extract_inner(text)
+        if self._enable_emotion:
+            text, _, _ = self.emotion.extract_inner(text)
         return text
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -2663,22 +2649,14 @@ class Main(Star):
             f"Cron Job: {'已注册' if self._cron_job_id else '未注册'}",
             f"核心记忆: {'启用' if self._enable_core_memory else '禁用'} ({self.core_memory.profile_count}人)",
             f"回忆记忆: {'启用' if self._enable_recall_memory else '禁用'}",
-            f"好感度系统: {'启用' if self._enable_affinity else '禁用'}",
+            f"情绪系统: {'启用' if self._enable_emotion else '禁用'}",
         ]
-        if self._enable_affinity:
-            sender_id = str(event.get_sender_id())
-            emo = self.affinity.get_debug_info(sender_id)
+        if self._enable_emotion:
+            emo = self.emotion.get_debug_info()
             lines.append(
                 f"情绪: valence={emo['valence']:.2f} arousal={emo['arousal']:.2f} "
-                f"vulnerability={emo['vulnerability']:.2f} baseline={emo['baseline']:.2f}"
+                f"vulnerability={emo['vulnerability']:.2f}"
             )
-            if "user" in emo:
-                u = emo["user"]
-                lines.append(
-                    f"你的好感度: {u['level']}({u['composite']:.0f}/100) "
-                    f"[熟悉={u['familiarity']:.2f} 信任={u['trust']:.2f} "
-                    f"有趣={u['fun']:.2f} 重要={u['importance']:.2f}]"
-                )
         if self._prank_state:
             turns_left = self._prank_state.get("turns_left")
             if turns_left is not None:
@@ -2829,10 +2807,6 @@ class Main(Star):
             updated = p.get("updated_at")
             if updated:
                 lines.append(f"更新于: {datetime.fromtimestamp(updated).strftime('%Y-%m-%d %H:%M')}")
-            if self._enable_affinity:
-                composite = self.affinity.get_composite(uid)
-                level = self.affinity.get_level(uid)
-                lines.append(f"好感度: {level}({composite:.0f}/100)")
             yield event.plain_result("\n".join(lines))
             return
 
@@ -2841,9 +2815,6 @@ class Main(Star):
             name = p.get("name", uid)
             rel = p.get("relationship", "")
             suffix = f" — {rel}" if rel else ""
-            if self._enable_affinity:
-                level = self.affinity.get_level(uid)
-                suffix += f" [{level}]"
             lines.append(f"· {name}(QQ{uid}){suffix}")
         lines.append(f"\n共 {self.core_memory.profile_count} 人")
         lines.append("用法: 琪露诺记忆 <名字/QQ号> | 琪露诺记忆 回忆")
@@ -2957,8 +2928,8 @@ class Main(Star):
         await self.put_kv_data("situation", self.situation.to_dict())
         await self.put_kv_data("quiet_data", self.quiet.to_dict())
         await self.put_kv_data("group_sessions", list(self._group_sessions))
-        if self._enable_affinity:
-            await self.affinity.save()
+        if self._enable_emotion:
+            await self.emotion.save()
         if self._enable_core_memory:
             await self.core_memory.save()
         if self._enable_recall_memory:

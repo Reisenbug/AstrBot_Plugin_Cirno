@@ -429,11 +429,16 @@ class RecallMemory:
         self, entry: dict, current_user_id: str | None, current_group_id: str | None
     ) -> float:
         """跨场景硬隔离。同会话满权重；别的会话只有当事人在场才捞得出来，否则直接屏蔽。
-        私聊 gid 为空，以前当"通用记忆"满权重注入，私聊剧情因此漏进了所有群。"""
+        私聊 gid 为空，以前当"通用记忆"满权重注入，私聊剧情因此漏进了所有群。
+
+        私聊记忆一律不进群：那是两个人之间的事，群里不该知道。单个人的私聊剧情
+        能占到 L1 一多半，靠"当事人在场"放进来就是拿私聊内容淹掉群聊检索。"""
         entry_gid = entry.get("gid", "") or ""
         cur_gid = current_group_id or ""
         if entry_gid == cur_gid:
             return 1.0
+        if cur_gid and not entry_gid:
+            return 0.0
         if current_user_id and current_user_id in entry.get("users", []):
             return 0.5
         return 0.0
