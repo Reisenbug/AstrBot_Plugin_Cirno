@@ -374,6 +374,36 @@ class Main(Star):
             return cut[: m.end()].strip()
         return cut.strip() + "…"
 
+    _CTX_LINE_RE = re.compile(r"^\[[^/\]]+/\d\d:\d\d:\d\d\]:\s*(.*)$")
+
+    @classmethod
+    def _peer_msg_len(cls, req) -> float:
+        """群友这会儿平均一条说多少字。取框架注入的群聊上下文块来量。
+
+        她会跟着群里的文风走：实测群友平均 46 字的群，她一条回复 3.7 段；
+        群友平均 7 字的群，1.1 段。同一套 prompt。所以长度指令得看环境下，
+        不能掷骰子。
+        """
+        parts = getattr(req, "extra_user_content_parts", None) or []
+        lens = []
+        for part in parts:
+            text = getattr(part, "text", "") or ""
+            if "BEGIN CONTEXT" not in text:
+                continue
+            body = text.split("BEGIN CONTEXT---", 1)[-1].split("--- END", 1)[0]
+            for line in body.split("\n"):
+                m = cls._CTX_LINE_RE.match(line.strip())
+                if not m:
+                    continue
+                # 图片/@/引用这些标记不算真实字数
+                content = re.sub(r"\[(?:Image|At|Quote|Voice|Video|File|Forward|Sticker)[^\]]*\]", "", m.group(1))
+                content = content.strip()
+                if content:
+                    lens.append(len(content))
+        if not lens:
+            return 0.0
+        return sum(lens) / len(lens)
+
     def _shrink_context(self, req):
         # 文本里的 [Image: 转述] 块全部折叠成 [图片]。
         # 用户当前发给 bot 看的主图走 req.image_urls（真图），不在文本里，不受影响。
@@ -888,12 +918,29 @@ class Main(Star):
                 logger.info(f"[私聊历史] 群内附加 {sender_id} 的私聊近况")
         _snap("私聊近况")
 
-        # 6c. 随机长度倾向，打破"上下文都长→继续长"的滚雪球惯性
-        _len_roll = random.random()
-        if _len_roll < 0.6:
-            req.system_prompt += "\n【这次】心情没那么多话，就一两句、干脆点，别展开。"
-        elif _len_roll < 0.75:
-            req.system_prompt += "\n【这次】兴致来了，可以多说几句、把想法尽兴地讲完。"
+        # 6c. 长度倾向。原来是掷骰子，跟群里什么情况无关——实测在长句群里
+        # 完全失效：60% 该抽中"就一两句"，那个群 13 条回复里 1-2 段的有 0 条。
+        # 抽象指令打不过具体示范：她眼前有十几条群友的长句摆着。
+        # 所以先量群友这会儿说话多长，再决定说什么。
+        # 阈值按实测定：18.1字→3.71段、13.6字→3.46段是要压的，
+        # 8.2字→1.12段、7.2字→2.07段本来就正常，别动。
+        _avg = self._peer_msg_len(req) if not is_private else 0
+        if _avg >= 16:
+            req.system_prompt += (
+                f"\n【这次】这个群的人说话又长又密，但你不是。"
+                f"你是个精力过剩的妖精，想到什么说什么，说完就跑——"
+                f"最多两句，别跟着他们写小作文。"
+            )
+        elif _avg >= 11:
+            req.system_prompt += "\n【这次】就一两句，干脆点，别展开。"
+        else:
+            _len_roll = random.random()
+            if _len_roll < 0.6:
+                req.system_prompt += "\n【这次】心情没那么多话，就一两句、干脆点，别展开。"
+            elif _len_roll < 0.75:
+                req.system_prompt += "\n【这次】兴致来了，可以多说几句、把想法尽兴地讲完。"
+        if _avg:
+            logger.info(f"[琪露诺文风] 群友平均 {_avg:.0f} 字/条")
         _snap("长度倾向")
 
         # 7. 当前特殊事件（戳一戳余怒）
