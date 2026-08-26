@@ -120,7 +120,6 @@ class Main(Star):
         self._critique_state: dict | None = None
         self._global_notes: list[str] = []
         self._recent_bot_replies: list[dict] = []
-        self._group_reply_ts: dict[str, list[float]] = {}  # umo -> 最近回复时刻，用于降噪
         self._dirty: set[str] = set()
         self._flush_task: asyncio.Task | None = None
         self._diag_task: asyncio.Task | None = None
@@ -360,26 +359,6 @@ class Main(Star):
 
     _SENT_END_RE = re.compile(r"[。！？!?…\n]")
     _HIST_REPLY_CAP = 80
-
-    # 出站行数上限。segmented_reply 按换行切条，一行就是一条消息，
-    # 所以"几行"直接等于"刷几条屏"。字数上限管不到"6行×12字"这种。
-    _MAX_LINES = 3
-    _MAX_LINES_PRIVATE = 5
-    _BURST_WINDOW = 20        # 秒
-    _BURST_THRESHOLD = 2      # 窗口内已回这么多条，就把后续压到一段
-    # system_prompt 预算。18 个块各自无条件往上加，没人管总量；
-    # 超了先告警并点名最肥的三块，好知道该砍谁。
-    # 实测常态 8527 字符（固定 5423 + 动态 3104），留 25% 余量。
-    _PROMPT_BUDGET = 10500
-
-    @classmethod
-    def _cap_lines(cls, text: str, limit: int) -> str:
-        """多出来的行直接丢掉。试过把尾巴并进最后一行，结果是三句挤成六十字一坨，
-        比刷屏还难读。她的话本来就是一行一个意思，砍掉后面几行读着仍然完整。"""
-        lines = [ln for ln in text.split("\n") if ln.strip()]
-        if len(lines) <= limit:
-            return "\n".join(lines)
-        return "\n".join(lines[:limit])
 
     @classmethod
     def _cap_reply_len(cls, text: str) -> str:
@@ -981,13 +960,6 @@ class Main(Star):
 
         total = len(req.system_prompt or "")
         block_str = " | ".join(f"{lbl}:{n}" for lbl, n in _pb)
-        if total > self._PROMPT_BUDGET:
-            over = total - self._PROMPT_BUDGET
-            top = sorted(_pb, key=lambda x: -x[1])[:3]
-            logger.warning(
-                f"[琪露诺Prompt超标] system={total} 超出预算 {self._PROMPT_BUDGET} 共{over}字符，"
-                f"最占地方的三块: {'、'.join(f'{l}({n})' for l, n in top)}"
-            )
 
         def _msg_len(c):
             if isinstance(c, str):
@@ -1074,25 +1046,6 @@ class Main(Star):
         bot_reply = "\n".join(
             line for line in bot_reply.split("\n") if line.strip()
         ).strip()
-        # 群里她会跟着群友的长句文风走，一条回复切成五六条刷屏。字数上限拦不住
-        # "6行×12字"，只能直接压行数。
-        _is_group = event.session.message_type == MessageType.GROUP_MESSAGE
-        _line_cap = self._MAX_LINES if _is_group else self._MAX_LINES_PRIVATE
-        # 几个人同时问的时候，每条回复各自切成好几条，并发发出去就是刷屏。
-        # 不闭嘴（那样像掉线），而是越密集说得越短。
-        if _is_group:
-            _umo = event.unified_msg_origin
-            _now = time.time()
-            _hist = [t for t in self._group_reply_ts.get(_umo, []) if _now - t < self._BURST_WINDOW]
-            if len(_hist) >= self._BURST_THRESHOLD:
-                _line_cap = 1
-                logger.info(f"[琪露诺压制] {self._BURST_WINDOW}秒内已回 {len(_hist)} 条，本条压到1段")
-            _hist.append(_now)
-            self._group_reply_ts[_umo] = _hist[-10:]
-        _before = bot_reply.count("\n") + 1
-        bot_reply = self._cap_lines(bot_reply, _line_cap)
-        if _before > _line_cap:
-            logger.info(f"[琪露诺压制] 回复 {_before} 段 → {_line_cap} 段")
         if not bot_reply:
             bot_reply = random.choice(["哼。", "……怎么了？", "嗯？"])
         if bot_reply != (resp.completion_text or ""):
