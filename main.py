@@ -357,6 +357,18 @@ class Main(Star):
         t = re.sub(r"\n{2,}", "\n", t)
         return re.sub(r"[ \t]+", " ", t).strip()
 
+    @staticmethod
+    def _flatten_lines(text: str) -> str:
+        """把历史里 bot 自己的换行抹平成一行。
+
+        换行会自我强化：上下文里她的历史回复是 6 段，她就照着再写 6 段，
+        又进历史。实测一个群里她自己的历史平均 4.7 段、回复也 4.7 段；
+        另一个群历史全是 1 段、回复就一直 1 段。示范比规则管用，
+        所以改示范。只动喂回模型的副本，已经发出去的一个字不动。
+        """
+        lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+        return " ".join(lines)
+
     _SENT_END_RE = re.compile(r"[。！？!?…\n]")
     _HIST_REPLY_CAP = 80
 
@@ -420,7 +432,7 @@ class Main(Star):
                 if is_assistant and ("（" in c or "(" in c or "*" in c):
                     c = self._strip_roleplay(c)
                 if is_assistant:
-                    c = self._cap_reply_len(c)
+                    c = self._cap_reply_len(self._flatten_lines(c))
                 msg["content"] = c
             elif isinstance(c, list):
                 for item in c:
@@ -432,7 +444,7 @@ class Main(Star):
                     if is_assistant and ("（" in t or "(" in t or "*" in t):
                         t = self._strip_roleplay(t)
                     if is_assistant:
-                        t = self._cap_reply_len(t)
+                        t = self._cap_reply_len(self._flatten_lines(t))
                     item["text"] = t
 
     async def _refresh_mood_note(self):
