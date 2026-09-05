@@ -357,17 +357,27 @@ class Main(Star):
         t = re.sub(r"\n{2,}", "\n", t)
         return re.sub(r"[ \t]+", " ", t).strip()
 
-    @staticmethod
-    def _flatten_lines(text: str) -> str:
-        """把历史里 bot 自己的换行抹平成一行。
+    _HIST_MAX_LINES = 2
+
+    @classmethod
+    def _flatten_lines(cls, text: str) -> str:
+        """把历史里 bot 自己的过多换行收敛掉，但留住两段。
 
         换行会自我强化：上下文里她的历史回复是 6 段，她就照着再写 6 段，
         又进历史。实测一个群里她自己的历史平均 4.7 段、回复也 4.7 段；
-        另一个群历史全是 1 段、回复就一直 1 段。示范比规则管用，
-        所以改示范。只动喂回模型的副本，已经发出去的一个字不动。
+        另一个群历史全是 1 段、回复就一直 1 段。
+
+        但全抹成一段是压过头了：她把 59 个字硬塞进一句，中间只能拿
+        "不过""可是"缝起来，转折反而变多。两段是正常人发消息的样子，
+        也给她一个"想说两件事就断开"的出口。只动喂回模型的副本，
+        已经发出去的一个字不动。
         """
         lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
-        return " ".join(lines)
+        if len(lines) <= cls._HIST_MAX_LINES:
+            return "\n".join(lines)
+        head = lines[: cls._HIST_MAX_LINES - 1]
+        head.append(" ".join(lines[cls._HIST_MAX_LINES - 1:]))
+        return "\n".join(head)
 
     _SENT_END_RE = re.compile(r"[。！？!?…\n]")
     _HIST_REPLY_CAP = 80
