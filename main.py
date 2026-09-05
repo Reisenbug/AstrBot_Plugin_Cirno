@@ -2986,6 +2986,43 @@ class Main(Star):
         await self.put_kv_data("global_notes", self._global_notes)
         yield event.plain_result(f"已删除: {removed}")
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("琪露诺重置全部群")
+    async def reset_all_groups(self, event: AstrMessageEvent):
+        """清掉所有群的对话历史，私聊不动。
+
+        聊久了她会开始抄自己：上下文里摆着七条同样句式的旧回复，
+        她就照着再写一条。清掉历史，那个模板就没了。
+        L1 回忆是第三人称转述，不受影响，她还记得发生过什么。
+        """
+        targets = [u for u in self._group_sessions if ":GroupMessage:" in u]
+        if not targets:
+            yield event.plain_result("没有记录到任何群会话")
+            return
+
+        cm = self.context.conversation_manager
+        done = skipped = 0
+        errors = []
+        for umo in targets:
+            try:
+                cid = await cm.get_curr_conversation_id(umo)
+                if not cid:
+                    skipped += 1
+                    continue
+                await cm.update_conversation(umo, cid, [])
+                done += 1
+            except Exception as e:
+                logger.error(f"[琪露诺重置] {umo} 失败: {e}", exc_info=True)
+                errors.append(f"{umo.split(':')[-1]}: {e}")
+
+        logger.info(f"[琪露诺重置] 清空 {done} 个群会话，跳过 {skipped}，失败 {len(errors)}")
+        lines = [f"已清空 {done} 个群的对话历史（私聊没动）"]
+        if skipped:
+            lines.append(f"跳过 {skipped} 个（没有进行中的对话）")
+        for e in errors[:5]:
+            lines.append(f"失败 {e}")
+        yield event.plain_result("\n".join(lines))
+
     async def terminate(self):
         if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
