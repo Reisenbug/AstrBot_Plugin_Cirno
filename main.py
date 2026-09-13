@@ -434,6 +434,10 @@ class Main(Star):
         if not req.contexts:
             return
         for msg in req.contexts:
+            # 人格的 begin_dialogs 示例（框架插在 contexts 最前面，带 _no_save）是
+            # 写给她看的范本，不能按历史回复截短/洗旁白，否则示例被自己的防漂移机制啃掉。
+            if msg.get("_no_save"):
+                continue
             is_assistant = msg.get("role") == "assistant"
             c = msg.get("content")
             if isinstance(c, str):
@@ -1128,7 +1132,7 @@ class Main(Star):
 
         valence_shift: float | None = None
         if self._enable_emotion and bot_reply:
-            cleaned, valence_shift, reason = self.emotion.extract_inner(bot_reply)
+            cleaned, valence_shift, _ = self.emotion.extract_inner(bot_reply)
             if cleaned != bot_reply:
                 if not cleaned.strip():
                     cleaned = random.choice(["哼。", "……怎么了？", "嗯？"])
@@ -1141,8 +1145,7 @@ class Main(Star):
                 self.emotion.update_emotion(valence_shift, cat)
                 logger.info(
                     f"[琪露诺情绪] v={self.emotion.valence:.2f} a={self.emotion.arousal:.2f} "
-                    f"vuln={self.emotion.vulnerability:.2f} shift={valence_shift:.2f} "
-                    f"reason={reason}"
+                    f"vuln={self.emotion.vulnerability:.2f} shift={valence_shift:.2f}"
                 )
                 self.emotion.increment_event_counter(sender_id)
                 self.mark_dirty("emotion")

@@ -306,12 +306,18 @@ class RecallMemory:
         gids = {e.get("gid", "") for e in batch if e.get("gid")}
         group_id = gids.pop() if len(gids) == 1 else ""
 
+        # 存一份 uid→名字快照：注入时靠它还原「和谁相关」。
+        # 只查 core_memory 的 profile 表会漏掉没建档的人，那些人会从归属里静默消失，
+        # 括号里的名单和正文里的名字对不上，反倒成了张冠李戴的素材。
+        names_snapshot = {e["uid"]: e["name"] for e in batch if e.get("name")}
+
         summary = {
             "ts": ts_max,
             "ts_start": ts_min,
             "text": summary_text,
             "kw": kw_unique,
             "users": list(users),
+            "names": names_snapshot,
             "vec": vec,
             "gid": group_id,
             "score": 1.0,
@@ -620,9 +626,14 @@ class RecallMemory:
                 time_hint = "前几天"
             else:
                 time_hint = "之前"
-            if uid_to_name:
+            snapshot = m.get("names") or {}
+            if uid_to_name or snapshot:
                 users = m.get("users", [])
-                names = [uid_to_name[u] for u in users if u in uid_to_name]
+                names = [
+                    snapshot.get(u) or uid_to_name.get(u, "")
+                    for u in users
+                    if snapshot.get(u) or (uid_to_name and u in uid_to_name)
+                ]
                 if len(names) > 3:
                     who = f"（和{'、'.join(names[:3])}等人相关）"
                 elif names:
