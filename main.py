@@ -5,6 +5,7 @@ import random
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import filter, AstrMessageEvent
@@ -110,6 +111,7 @@ class Main(Star):
         self._last_full_prompt: str = ""
         self._imitation_state: dict[str, dict] = {}  # session_id -> state
         data_dir = str(StarTools.get_data_dir("astrbot_plugin_cirno"))
+        self._trace_dir = Path(data_dir) / "prompt_traces"
         self.user_msg_store = UserMessageStore(data_dir)
         self.group_msg_store = GroupMessageStore(data_dir)
         self.slang_store = SlangStore(data_dir)
@@ -381,6 +383,29 @@ class Main(Star):
 
     _SENT_END_RE = re.compile(r"[。！？!?…\n]")
     _HIST_REPLY_CAP = 80
+
+    MAX_TRACES = 50
+
+    def _prune_traces(self):
+        files = sorted(self._trace_dir.glob("*.txt"))
+        for old in files[: -self.MAX_TRACES]:
+            try:
+                old.unlink()
+            except Exception:
+                pass
+
+    def _append_trace(self, event, section: str, body: str):
+        """把回复追回同一个 trace 文件，凑成「这套输入 -> 出了什么」的完整配对。"""
+        trace_id = event.get_extra("cirno_trace")
+        if not trace_id:
+            return
+        try:
+            path = self._trace_dir / f"{trace_id}.txt"
+            if path.exists():
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(f"\n\n=== {section} ===\n{body}")
+        except Exception as e:
+            logger.warning(f"[琪露诺回溯] 追加失败: {e}")
 
     @classmethod
     def _cap_reply_len(cls, text: str) -> str:
@@ -1090,11 +1115,26 @@ class Main(Star):
                     parts.append(f"[{role}] {''.join(text_parts)}")
         parts.append(f"\n=== PROMPT ===\n{req.prompt or ''}")
         self._last_full_prompt = "\n".join(parts)
+        # 归档成一次一个文件：只留最后一次的话，群里再来一条就把现场冲掉了，
+        # 想查的那次基本永远抓不到。回复在 on_llm_response 里追加到同一个文件。
+        trace_id = f"{time.strftime('%m%d-%H%M%S')}-{sender_id}"
+        event.set_extra("cirno_trace", trace_id)
+        where = "私聊" if is_private else f"群{event.get_group_id() or '?'}"
+        header = (
+            f"=== TRACE {trace_id} ===\n"
+            f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"场合: {where}\n"
+            f"发言人: {sender_nickname}({sender_id})\n"
+            f"原话: {event.message_str or ''}\n"
+        )
         try:
-            with open(os.path.join(os.path.dirname(__file__), "last_prompt.txt"), "w", encoding="utf-8") as f:
-                f.write(self._last_full_prompt)
-        except Exception:
-            pass
+            self._trace_dir.mkdir(parents=True, exist_ok=True)
+            (self._trace_dir / f"{trace_id}.txt").write_text(
+                header + "\n" + self._last_full_prompt, encoding="utf-8"
+            )
+            self._prune_traces()
+        except Exception as e:
+            logger.warning(f"[琪露诺回溯] 写入失败: {e}")
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
@@ -1132,6 +1172,10 @@ class Main(Star):
             bot_reply = random.choice(["哼。", "……怎么了？", "嗯？"])
         if bot_reply != (resp.completion_text or ""):
             resp.completion_text = bot_reply
+
+        self._append_trace(event, f"REPLY ({len(bot_reply)}字)", bot_reply)
+        if tool_calls := getattr(resp, "tools_call_name", None):
+            self._append_trace(event, "TOOL CALLS", ", ".join(tool_calls))
 
         if bot_reply:
             sentiment, intensity = self.emotion.peek_sentiment(bot_reply)
@@ -2768,6 +2812,45 @@ class Main(Star):
             yield event.plain_result("还没有记录到提示词，先聊一句再来看")
             return
         yield event.plain_result(self._last_full_prompt)
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("琪露诺回溯")
+    async def debug_trace(self, event: AstrMessageEvent, which: str = ""):
+        try:
+            files = sorted(self._trace_dir.glob("*.txt"), reverse=True)
+        except Exception:
+            files = []
+        if not files:
+            yield event.plain_result("还没有记录，先聊一句再来看")
+            return
+        which = which.strip()
+        if not which:
+            lines = ["最近的回溯记录（用「琪露诺回溯 <编号或ID>」看详情）："]
+            for i, p in enumerate(files[:10], 1):
+                head = {}
+                try:
+                    for ln in p.read_text(encoding="utf-8").split("\n")[:6]:
+                        if ":" in ln:
+                            k, _, v = ln.partition(":")
+                            head[k.strip()] = v.strip()
+                except Exception:
+                    pass
+                lines.append(
+                    f"{i}. {p.stem} | {head.get('场合', '?')} | "
+                    f"{head.get('发言人', '?')} | {head.get('原话', '')[:20]}"
+                )
+            yield event.plain_result("\n".join(lines))
+            return
+        target = None
+        if which.isdigit() and 1 <= int(which) <= len(files):
+            target = files[int(which) - 1]
+        else:
+            target = next((p for p in files if p.stem == which), None)
+        if not target:
+            yield event.plain_result(f"没找到「{which}」")
+            return
+        body = target.read_text(encoding="utf-8")
+        yield event.plain_result(body[:3000] if len(body) > 3000 else body)
 
     @filter.command("琪露诺学说话")
     async def start_imitation(self, event: AstrMessageEvent, target: str = ""):
