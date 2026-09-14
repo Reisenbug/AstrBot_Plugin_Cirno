@@ -996,11 +996,20 @@ class Main(Star):
         if not is_private:
             slang_matches = self.slang_store.match(event.message_str or "")
             if slang_matches:
+                # 给原话不给定义：她见过这个词怎么用，但未必说得清是什么意思，
+                # 这本来就是笨蛋妖精该有的样子（规则里写着"听不懂就问"）。
                 slang_lines = "\n".join(
-                    f'「{e["word"]}」：{e["meaning"]}，可以自然地用在合适的场合。'
+                    f'「{e["word"]}」群里这么用过：'
+                    + "；".join(f'"{x}"' for x in e.get("examples", []))
                     for e in slang_matches
+                    if e.get("examples")
                 )
-                req.system_prompt += f"\n【群里的说法】\n{slang_lines}"
+                if slang_lines:
+                    req.system_prompt += (
+                        f"\n【群里的说法】\n{slang_lines}"
+                        "\n这些是群里的梗，你见过但不一定懂。别硬解释它的意思，"
+                        "想用就照着那个用法用，不确定就问他们。"
+                    )
         _snap("群黑话")
         if self._global_notes:
             from .recall_memory import extract_keywords
@@ -1965,18 +1974,21 @@ class Main(Star):
             cand_lines.append(f'「{c["term"]}」（出现{c["frequency"]}次）例：{examples}')
 
         existing_hint = f"已知词汇（不要重复）：{', '.join(existing_words)}\n" if existing_words else ""
+        # 只让它「挑词」，不让它「下定义」：给不认识的缩写编释义是词义归纳(WSI)，
+        # 公认未解，模型只会按表层模式硬凑。用法例句直接取群友原话，不经模型生成。
         prompt = (
             f"{existing_hint}"
             "下面是从群聊中统计筛选出的高频候选词，每个词附有出现次数和上下文例句。\n"
-            "请只挑出【这个群自己造的、外人看不懂的特有说法】——比如群内黑话、自创梗、只在这个群有特定含义的缩写。\n"
+            "请只挑出【这个群自己造的、外人看不懂的特有说法】：群内黑话、自创梗、只在这个群有特定含义的缩写。\n"
             "【必须跳过，不要收录】：\n"
-            "- 东方Project的角色名（灵梦、魔理沙、巫女、大酱、恋恋等）——这些是常识，不是黑话\n"
-            "- 通用网络词/日常词（笨蛋、抱抱、猫娘、魔法、baka 等）——不是某个群特有\n"
-            "- 任何角色的口癖、语气词（だぜ、daze、da、ze、的说 等）——绝对不收\n"
+            "- 东方Project的角色名和术语（灵梦、魔理沙、巫女、大酱、恋恋、退治、骚灵等），这些是常识不是黑话\n"
+            "- 通用网络词/日常词（笨蛋、抱抱、猫娘、魔法、baka 等），不是某个群特有\n"
+            "- 任何角色的口癖、语气词（だぜ、daze、da、ze、的说 等），绝对不收\n"
             "- 切词产生的无意义碎片（如'这是''咱才'这种不成词的）\n"
             "宁缺毋滥，拿不准就跳过。如果没有真正的群特有黑话，返回空数组 []。\n"
+            "**只判断这个词是不是群特有黑话，不要解释它是什么意思。**\n"
             "只输出合法JSON数组，格式：\n"
-            '[{"word": "词", "meaning": "含义", "scene": "关键词1 关键词2 关键词3"}, ...]\n\n'
+            '[{"word": "词"}, ...]\n\n'
             "候选词：\n" + "\n".join(cand_lines)
         )
 
@@ -2009,16 +2021,22 @@ class Main(Star):
             logger.error(f"[琪露诺学习] JSON 解析失败: {e} | raw={raw[:200]}")
             return
         added = 0
+        by_term = {c["term"]: c for c in top_candidates}
         for item in new_words:
             if not isinstance(item, dict):
                 continue
             word = item.get("word", "").strip()
-            meaning = item.get("meaning", "").strip()
-            scene = item.get("scene", "").strip()
-            if word and meaning and scene:
-                if self.slang_store.add(word, meaning, scene):
-                    added += 1
-                    logger.info(f"[琪露诺学习] 新词: 「{word}」→ {meaning} (scene: {scene})")
+            if not word:
+                continue
+            # 用法例句取群友原话，不要模型生成的东西
+            cand = by_term.get(word)
+            examples = cand.get("context_examples", []) if cand else []
+            if not examples:
+                logger.info(f"[琪露诺学习] 跳过「{word}」：候选里没有原话")
+                continue
+            if self.slang_store.add(word, examples):
+                added += 1
+                logger.info(f"[琪露诺学习] 新词: 「{word}」例：{examples[0][:30]}")
         if added:
             self.slang_store.save()
             logger.info(f"[琪露诺学习] 新增 {added} 个词，总计 {len(self.slang_store.get_all())} 个")

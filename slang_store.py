@@ -4,9 +4,8 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from .recall_memory import extract_keywords
-
 MAX_SLANG = 50
+MAX_EXAMPLES = 3
 
 # 硬黑名单：即便 LLM 漏判也不入库——口癖语气词（防 daze 投毒）、切词碎片、
 # 琪露诺自己的冰招式（黑话库不该怂恿她用冰梗，否则句句冻人）
@@ -44,7 +43,10 @@ class SlangStore:
     def get_all(self) -> list[dict]:
         return list(self._entries)
 
-    def add(self, word: str, meaning: str, scene: str) -> bool:
+    def add(self, word: str, examples: list[str]) -> bool:
+        """只存词和群友的原话，不存"含义"。让模型给不认识的缩写下定义等于要求它做
+        词义归纳(WSI)，那是公认未解的任务，它只会按表层模式硬编（"hyw"猜成"好诱吻"）。
+        原话是真实数据，没有生成环节，编不错。"""
         word = word.strip()
         if not word:
             return False
@@ -52,10 +54,12 @@ class SlangStore:
             return False
         if any(e["word"] == word for e in self._entries):
             return False
+        cleaned = [x.strip() for x in examples if x and x.strip()][:MAX_EXAMPLES]
+        if not cleaned:
+            return False
         self._entries.append({
             "word": word,
-            "meaning": meaning.strip(),
-            "scene": scene.strip(),
+            "examples": cleaned,
             "ts": time.time(),
         })
         if len(self._entries) > MAX_SLANG:
@@ -64,14 +68,10 @@ class SlangStore:
         return True
 
     def match(self, text: str) -> list[dict]:
+        """词本身出现在消息里就算命中。黑话多是 hyw/wzy/kuuki 这种分词器不认识的东西，
+        走 jieba 只会被切碎，子串是唯一可靠的办法。"""
         if not text or not self._entries:
             return []
-        msg_kw = set(extract_keywords(text))
-        if not msg_kw:
-            return []
-        matched = []
-        for entry in self._entries:
-            scene_kw = set(entry.get("scene", "").split())
-            if scene_kw & msg_kw:
-                matched.append(entry)
+        lower = text.lower()
+        matched = [e for e in self._entries if e["word"].lower() in lower]
         return matched[:3]
