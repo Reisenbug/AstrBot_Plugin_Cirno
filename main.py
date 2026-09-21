@@ -1028,8 +1028,29 @@ class Main(Star):
         # 所以先量群友这会儿说话多长，再决定说什么。
         # 阈值按实测定：18.1字→3.71段、13.6字→3.46段是要压的，
         # 8.2字→1.12段、7.2字→2.07段本来就正常，别动。
+        # Jev 判断这轮该用什么姿态接。它挂了/超时/没配就返回 None，
+        # 直接掉回下面原来那套按群友字数走的逻辑，不影响她说话。
+        _judged = None
+        if self.judgment.enabled and not is_private:
+            _judged = await self.judgment.judge(
+                self,
+                event,
+                self._peer_lines(req),
+                getattr(self, "_last_caption", ""),
+                sender_id,
+            )
+            if _judged is None:
+                logger.warning("[琪露诺判断] 这轮没拿到判断，退回按群友字数定长度")
+
         _avg = self._peer_msg_len(req) if not is_private else 0
-        if _avg >= 16:
+        if _judged is not None:
+            req.system_prompt += self.judgment.build_prompt(_judged)
+            event.set_extra("cirno_judged", _judged)
+            logger.info(
+                f"[琪露诺判断] 可接={_judged['有多少可接']} "
+                f"反应={_judged['反应']} (conf {_judged['反应confidence']})"
+            )
+        elif _avg >= 16:
             req.system_prompt += (
                 f"\n【这次】这个群的人说话又长又密，但你不是。"
                 f"你是个精力过剩的妖精，想到什么说什么，说完就跑——"
@@ -1189,25 +1210,10 @@ class Main(Star):
         except Exception as e:
             logger.warning(f"[琪露诺回溯] 写入失败: {e}")
 
-        # 旁路判断：只记进 trace，不改她的行为。先看判断准不准再谈接不接。
-        if self.judgment.enabled and not is_private:
-            self._spawn(
-                self._judge_sidecar(
-                    event, self._peer_lines(req), getattr(self, "_last_caption", "")
-                ),
-                "judge_sidecar",
+        if judged := event.get_extra("cirno_judged"):
+            self._append_trace(
+                event, "JUDGMENT", self.judgment.format_for_trace(judged)
             )
-
-    async def _judge_sidecar(self, event, peers: list[str], caption: str = ""):
-        result = await self.judgment.judge(self, event, peers, caption)
-        if not result:
-            return
-        self._append_trace(event, "JUDGMENT", self.judgment.format_for_trace(result))
-        logger.info(
-            f"[琪露诺判断] 该开口={result['该开口']} "
-            f"长度={result['说多长']['score']} "
-            f"反应={result['挑哪种反应']['choice']}"
-        )
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):

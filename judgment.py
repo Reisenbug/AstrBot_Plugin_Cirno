@@ -1,11 +1,12 @@
-"""把"她该不该开口、说多长、挑哪种反应"交给一个只做判断的小模型。
+"""她这轮该用什么姿态接话，交给一个只做判断的小模型。
 
-为什么不让主模型判断：TimingGate 现在就是拿主模型问"要不要插嘴"，慢到得设超时
-（代码里有"超时，默认不插嘴"这个分支），还和主回复抢同一个限流配额。判断和生成
-同源还有个副作用：让她自己决定要不要说话，等于给了她一个弃答选项，而那种选项会
-被滥用。外部判断没这问题，决定权不在她手里。
+为什么不写进规则：规则是"建议"，她可以不理，这一周反复验证过。判断是外部决定，
+写进 prompt 的是结果不是选项。
 
-现在是旁路：只把结果写进 trace，不改她的行为。先看判断准不准。
+为什么不让主模型判断：同源的判断和生成会互相污染语域，而且慢。主模型一次 4.8s，
+这个 0.8s，还不占它那 10 次/分钟的配额。
+
+@ 她必回，所以这里不判断"要不要开口"，只判断"怎么接"。
 """
 
 import os
@@ -16,7 +17,6 @@ try:
     from typesafe_sdk import (
         AsyncTypeSafeClient,
         Choice,
-        Noul,
         RetryPolicy,
         Score,
         TypeSafeError,
@@ -26,9 +26,10 @@ except ImportError:  # SDK 没装就整个功能静默关掉
     TypeSafeError = Exception
 
 
-# 挑哪种反应。选项直接取自 ABSOLUTE_RULES 里"情绪上来挑且只挑一个反应"那份清单，
-# 那里本来就写好了每种的适用情形，这里只是把"建议"变成"外部决定"。
+# 选项取自 ABSOLUTE_RULES 里"情绪上来挑且只挑一个反应"那份清单，
+# 那里本来就写好了每种的适用情形，这里把"建议"变成"外部决定"。
 REACTIONS = {
+    "随口应一声": "对方没说什么实质内容，应一声就完事，不用找话题也不用接梗",
     "损人打趣": "揪着对方话里的毛病打趣他，不留情但不恶意",
     "揪漏洞": "对方话里有说不通的地方，抓住它追问或拆台",
     "故意曲解": "明知道他什么意思，偏要歪着理解，把话题揽到自己身上",
@@ -37,12 +38,20 @@ REACTIONS = {
     "歪理绕人": "用幻想乡的逻辑把对方绕进去，一本正经地胡说",
     "反将一军": "对方想逗她或占便宜，她反手把矛头转回去",
     "嘴硬招架": "被戳中了或害羞了，嘴上不认，防守姿态",
+    "凑上去好奇": "对方说的事她没见过或想知道，直接追着问",
 }
 
-LENGTH_LEVELS = [
-    "一个字或一个词的反应就够了，纯情绪，没有内容",
-    "一句话，接住对方说的那一件事",
-    "两三句，有来有回地闹起来",
+# 判断的是"这轮有多少东西可接"，不是字数。长度由代码翻译。
+SUBSTANCE_LEVELS = [
+    "对方就是随口吭一声、丢个表情、刷个梗，没什么可接的",
+    "对方说了件具体的事，接住这一件事就够",
+    "对方抛了个真问题或真话题，她有得聊",
+]
+
+_LENGTH_HINT = [
+    "一句话，短到不能再短，说完就跑。",
+    "一两句，只接他说的那一件事，别展开。",
+    "可以多说几句，但仍然一条消息说一件事。",
 ]
 
 
@@ -59,7 +68,7 @@ class Judgment:
             return
         kwargs = {
             "api_key": key,
-            # 判断是旁路，宁可放弃也别拖慢主链路
+            # 判断挡在回复前面，宁可放弃也别拖着她不说话
             "retry": RetryPolicy(max_retries=1, timeout=3.0),
         }
         if model:
@@ -73,72 +82,73 @@ class Judgment:
             except Exception:
                 pass
 
-    def _build_state(
-        self, plugin, event, peers: list[str], caption: str = ""
-    ) -> dict:
-        """判断要读的东西：群里刚才在聊什么，她此刻是什么状态。
-
-        心情只给 arousal（精力），不给 valence（情绪好坏）。valence 参与"说不说"
-        会螺旋：心情低 -> 判断少说 -> 说得少 -> <inner> 还是负面 -> 心情更低。
-        精力高低影响话多话少是自然的，不会自我强化。
-        """
+    def _build_state(self, plugin, event, peers, caption, sender_id) -> dict:
         from .cirno_states import CIRNO_STATES
 
         state_label = CIRNO_STATES.get(
             plugin.state_manager.current_state, {}
         ).get("label", "")
+        mood = plugin.mood_manager.get_debug_info()
+
+        her_view = {"熟不熟": "没什么印象"}
+        prof = (
+            plugin.core_memory.get_profile(sender_id)
+            if plugin._enable_core_memory
+            else None
+        )
+        if prof:
+            if prof.get("relationship"):
+                her_view = {
+                    "熟不熟": "熟",
+                    "她对这个人的感觉": prof["relationship"],
+                }
+            events = prof.get("important_events", [])[:2]
+            if events:
+                her_view["还记得的事"] = [
+                    e.get("event", e) if isinstance(e, dict) else e for e in events
+                ]
+
         return {
-            "群里刚才在聊": peers,
             "这条消息": {
                 "谁说的": event.get_sender_name(),
                 # 纯图片消息的 message_str 是空的，得把转述补上，
                 # 否则判断模型是在对一条空消息打分。
                 "内容": (event.message_str or "").strip() or caption or "[图片]",
-                "有没有叫琪露诺": bool(event.is_at_or_wake_command),
             },
-            "琪露诺此刻": {
+            "群里刚才在聊": peers,
+            "她对这个人": her_view,
+            "她此刻": {
                 "在干嘛": state_label,
+                "现在是什么状态": mood.get("mood_label", ""),
+                "心里挂着的事": mood.get("note", ""),
                 "精力": round(plugin.emotion.arousal, 2),
-                "心里挂着的事": plugin.mood_manager.get_debug_info().get("note", ""),
+                "心情好坏": round(plugin.emotion.valence, 2),
+                "刚被聊天影响成": mood.get("feeling", "none"),
             },
         }
 
-    async def judge(
-        self, plugin, event, peers: list[str], caption: str = ""
-    ) -> dict | None:
-        """三个判断一次问完。它们读同一份 state 且互不依赖，并行返回，只付一次延迟。"""
+    async def judge(self, plugin, event, peers, caption="", sender_id="") -> dict | None:
+        """两个判断一次问完。它们读同一份 state 且互不依赖，并行返回，只付一次延迟。"""
         if not self.enabled or self._client is None:
             return None
-        state = self._build_state(plugin, event, peers, caption)
         try:
+            state = self._build_state(plugin, event, peers, caption, sender_id)
             resp = await self._client.system_one(
                 state=state,
                 questions={
-                    "该开口": Noul(
+                    "有多少可接": Score(
                         instructions=(
-                            "琪露诺现在应该开口说话吗？她是个爱凑热闹、坐不住的冰精灵，"
-                            "别人没招惹她她也会主动凑上去搭话。"
-                            "注意：她精力差或心情不好的时候不是更沉默，而是更想去戳人、拆台。"
+                            "对方这条消息给了琪露诺多少可以接的东西？"
+                            "看的是内容的分量，不是字数长短。"
                         ),
-                        criteria={
-                            "true": "有人在跟她说话或提到她；话题热闹到她忍不住插一嘴；"
-                            "有人说了句怪话或肉麻话可以起哄；有人在逗她",
-                            "false": "两个人在认真聊她插不上的正事；话题已经过去了；"
-                            "她刚说完话还没人接，再说就是自说自话；"
-                            "群里在刷屏或复读，没有她的位置",
-                        },
-                    ),
-                    "说多长": Score(
-                        instructions=(
-                            "琪露诺这次该说多长？她说话短促跳脱，想到什么说什么。"
-                            "看群里现在的节奏：别人都在甩短句时她写小作文就很怪。"
-                        ),
-                        criteria=LENGTH_LEVELS,
+                        criteria=SUBSTANCE_LEVELS,
                     ),
                     "挑哪种反应": Choice(
                         instructions=(
                             "琪露诺这次该挑哪一种反应？她一条回复只做一件事。"
                             "优先主动进攻型的，防守型（嘴硬招架）只偶尔对亲近的人用。"
+                            "注意：她心情差或精力低的时候不是更沉默，是更想去戳人、拆台；"
+                            "对熟人和对陌生人的同一句话，她的反应可以完全不同。"
                         ),
                         criteria=REACTIONS,
                     ),
@@ -153,24 +163,26 @@ class Judgment:
 
         a = resp.answers
         return {
-            "该开口": round(a["该开口"].noul, 3),
-            "说多长": {
-                "score": round(a["说多长"].score, 2),
-                "confidence": round(a["说多长"].confidence, 3),
-            },
-            "挑哪种反应": {
-                "choice": a["挑哪种反应"].choice,
-                "confidence": round(a["挑哪种反应"].confidence, 3),
-            },
+            "有多少可接": round(a["有多少可接"].score, 2),
+            "可接confidence": round(a["有多少可接"].confidence, 3),
+            "反应": a["挑哪种反应"].choice,
+            "反应confidence": round(a["挑哪种反应"].confidence, 3),
         }
 
     @staticmethod
-    def format_for_trace(result: dict) -> str:
-        length = result["说多长"]
-        reaction = result["挑哪种反应"]
-        level = LENGTH_LEVELS[min(int(round(length["score"])), len(LENGTH_LEVELS) - 1)]
+    def build_prompt(result: dict) -> str:
+        """判断结果翻译成给她的指令。长度用连续值分档，不是模型直接说的字数。"""
+        level = min(int(round(result["有多少可接"])), len(_LENGTH_HINT) - 1)
+        reaction = result["反应"]
+        desc = REACTIONS.get(reaction, "")
         return (
-            f"该开口: {result['该开口']}\n"
-            f"说多长: {length['score']} (conf {length['confidence']}) -> {level}\n"
-            f"挑哪种反应: {reaction['choice']} (conf {reaction['confidence']})"
+            f"\n【这次】{_LENGTH_HINT[level]}"
+            f"\n挑这一个反应：{reaction}。{desc}。只做这一件事，别捎带别的。"
+        )
+
+    @staticmethod
+    def format_for_trace(result: dict) -> str:
+        return (
+            f"有多少可接: {result['有多少可接']} (conf {result['可接confidence']})\n"
+            f"反应: {result['反应']} (conf {result['反应confidence']})"
         )
