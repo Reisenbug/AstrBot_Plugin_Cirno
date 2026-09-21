@@ -389,7 +389,11 @@ class Main(Star):
         return "\n".join(head)
 
     _SENT_END_RE = re.compile(r"[。！？!?…\n]")
-    _HIST_REPLY_CAP = 80
+    # 对齐 begin_dialogs 示例的量级（那 7 条是 18-36 字）。原来是 80，
+    # 而她的回复全在 78 字以下，等于从没生效过：喂回去的历史里，
+    # 她自己那十来条 40-78 字的回复把 26 字的示例整个淹掉了，
+    # 其中一半在抱怨"你怎么只会说一个字"，于是下一轮照着这个模板再抱怨一次。
+    _HIST_REPLY_CAP = 30
 
     MAX_TRACES = 50
 
