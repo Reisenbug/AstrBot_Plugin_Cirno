@@ -1007,6 +1007,21 @@ class Main(Star):
             req.system_prompt += "\n如果以上记忆和当前话题有关，随口带一嘴，不要生硬复述。"
         _snap("回忆检索")
 
+        # Jev 判断这轮该用什么姿态接。挂了/超时/没配就是 None，
+        # 后面每一处都会掉回原来的逻辑，不影响她说话。
+        # 放在场景上下文之前：私聊那段"可以多絮叨"要按判断结果决定发不发。
+        _judged = None
+        if self.judgment.enabled:
+            _judged = await self.judgment.judge(
+                self,
+                event,
+                self._peer_lines(req),
+                getattr(self, "_last_caption", ""),
+                sender_id,
+            )
+            if _judged is None:
+                logger.warning("[琪露诺判断] 这轮没拿到判断，退回按群友字数定长度")
+
         # 6. 场景上下文（随机插嘴 / 私聊 / 普通）
         if is_random_reply:
             req.system_prompt += (
@@ -1027,7 +1042,11 @@ class Main(Star):
                 "可以连说好几句短的，一句一个意思，中间用换行断开，像在连着发消息。"
                 "但每一句都要短、都只说一个意思——是几句短话接龙，绝不是把一句话塞进七个转折（『才不是…不过…虽然…但是…除非…然后…』那种一口气抗拒又服软又讨价还价，依然是大忌）。"
             )
-            if is_close:
+            # 「往下淌」只在对方真给了东西可接时才成立。对着一句"唔"絮叨，
+            # 这段会直接盖过下面判断给的"短到不能再短"。
+            if _judged is not None and _judged["有多少可接"] < 1:
+                private_prompt = private_prompt.split("\n私聊里你不用")[0]
+            elif is_close:
                 private_prompt += "你不需要撑面子，说话更松弛，偶尔流露真实感受，也更愿意多絮叨几句。"
             req.system_prompt += private_prompt
         _snap("场景上下文")
@@ -1049,20 +1068,6 @@ class Main(Star):
         # 所以先量群友这会儿说话多长，再决定说什么。
         # 阈值按实测定：18.1字→3.71段、13.6字→3.46段是要压的，
         # 8.2字→1.12段、7.2字→2.07段本来就正常，别动。
-        # Jev 判断这轮该用什么姿态接。它挂了/超时/没配就返回 None，
-        # 直接掉回下面原来那套按群友字数走的逻辑，不影响她说话。
-        _judged = None
-        if self.judgment.enabled:
-            _judged = await self.judgment.judge(
-                self,
-                event,
-                self._peer_lines(req),
-                getattr(self, "_last_caption", ""),
-                sender_id,
-            )
-            if _judged is None:
-                logger.warning("[琪露诺判断] 这轮没拿到判断，退回按群友字数定长度")
-
         _avg = self._peer_msg_len(req) if not is_private else 0
         if _judged is not None:
             req.system_prompt += self.judgment.build_prompt(_judged)
