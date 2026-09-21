@@ -456,8 +456,11 @@ class Main(Star):
 
     @classmethod
     def _peer_lines(cls, req, limit: int = 12) -> list[str]:
-        """群友最近说的那些话本身，判断模型要拿它看群里的节奏。
-        和 _peer_msg_len 解析同一个上下文块，那边要字数，这边要原话。"""
+        """刚才这几句聊的是什么，判断模型要拿它看节奏。
+
+        群聊读框架注入的群聊上下文块；私聊没有那个块，退回读最近几轮对话，
+        否则判断模型面对一句"呜"就没有任何上下文可依据。
+        """
         lines = []
         for text in cls._ctx_texts(req):
             if "BEGIN CONTEXT" not in text:
@@ -467,6 +470,24 @@ class Main(Star):
                 m = cls._CTX_LINE_RE.match(line.strip())
                 if m and m.group(1).strip():
                     lines.append(m.group(1).strip())
+        if lines:
+            return lines[-limit:]
+
+        for msg in (getattr(req, "contexts", None) or [])[-limit:]:
+            c = msg.get("content")
+            if isinstance(c, list):
+                c = " ".join(
+                    i.get("text", "")
+                    for i in c
+                    if isinstance(i, dict) and i.get("type") == "text"
+                )
+            if not isinstance(c, str):
+                continue
+            t = re.sub(r"<(inner|system_reminder|image_caption)>.*", "", c, flags=re.DOTALL)
+            t = cls._fold_images(t).strip()
+            if t:
+                who = "她" if msg.get("role") == "assistant" else "他"
+                lines.append(f"{who}：{t[:60]}")
         return lines[-limit:]
 
     @classmethod
@@ -1031,7 +1052,7 @@ class Main(Star):
         # Jev 判断这轮该用什么姿态接。它挂了/超时/没配就返回 None，
         # 直接掉回下面原来那套按群友字数走的逻辑，不影响她说话。
         _judged = None
-        if self.judgment.enabled and not is_private:
+        if self.judgment.enabled:
             _judged = await self.judgment.judge(
                 self,
                 event,
