@@ -430,14 +430,36 @@ class Main(Star):
 
     _CTX_LINE_RE = re.compile(r"^\[[^/\]]+/\d\d:\d\d:\d\d\]:\s*(.*)$")
 
+    @staticmethod
+    def _ctx_texts(req) -> list[str]:
+        """所有可能夹着群聊上下文块的文本。
+
+        框架把那个块塞在 contexts 的消息里（<system_reminder> 内），
+        不是 extra_user_content_parts。只看后者的话一条都取不到。
+        """
+        out = []
+        for part in getattr(req, "extra_user_content_parts", None) or []:
+            t = getattr(part, "text", "") or ""
+            if t:
+                out.append(t)
+        for msg in getattr(req, "contexts", None) or []:
+            c = msg.get("content")
+            if isinstance(c, str):
+                out.append(c)
+            elif isinstance(c, list):
+                out.extend(
+                    i.get("text", "")
+                    for i in c
+                    if isinstance(i, dict) and i.get("type") == "text"
+                )
+        return out
+
     @classmethod
     def _peer_lines(cls, req, limit: int = 12) -> list[str]:
         """群友最近说的那些话本身，判断模型要拿它看群里的节奏。
         和 _peer_msg_len 解析同一个上下文块，那边要字数，这边要原话。"""
-        parts = getattr(req, "extra_user_content_parts", None) or []
         lines = []
-        for part in parts:
-            text = getattr(part, "text", "") or ""
+        for text in cls._ctx_texts(req):
             if "BEGIN CONTEXT" not in text:
                 continue
             body = text.split("BEGIN CONTEXT---", 1)[-1].split("--- END", 1)[0]
@@ -455,10 +477,8 @@ class Main(Star):
         群友平均 7 字的群，1.1 段。同一套 prompt。所以长度指令得看环境下，
         不能掷骰子。
         """
-        parts = getattr(req, "extra_user_content_parts", None) or []
         lens = []
-        for part in parts:
-            text = getattr(part, "text", "") or ""
+        for text in cls._ctx_texts(req):
             if "BEGIN CONTEXT" not in text:
                 continue
             body = text.split("BEGIN CONTEXT---", 1)[-1].split("--- END", 1)[0]
@@ -475,7 +495,16 @@ class Main(Star):
             return 0.0
         return sum(lens) / len(lens)
 
+    _CAPTION_TEXT_RE = re.compile(r"<image_caption>(.*?)</image_caption>", re.DOTALL)
+
     def _shrink_context(self, req):
+        # 折叠之前先把这轮图片的转述留一份：纯图片消息的 message_str 是空的，
+        # 判断模型没有别的地方能知道图里是什么。折叠后就只剩 [图片] 了。
+        self._last_caption = ""
+        m = self._CAPTION_TEXT_RE.search(req.prompt or "")
+        if m:
+            self._last_caption = m.group(1).strip()[:200]
+
         # 文本里的 [Image: 转述] 块全部折叠成 [图片]。
         # 用户当前发给 bot 看的主图走 req.image_urls（真图），不在文本里，不受影响。
         if getattr(req, "prompt", None) and "[Image:" in req.prompt:
@@ -1163,11 +1192,14 @@ class Main(Star):
         # 旁路判断：只记进 trace，不改她的行为。先看判断准不准再谈接不接。
         if self.judgment.enabled and not is_private:
             self._spawn(
-                self._judge_sidecar(event, self._peer_lines(req)), "judge_sidecar"
+                self._judge_sidecar(
+                    event, self._peer_lines(req), getattr(self, "_last_caption", "")
+                ),
+                "judge_sidecar",
             )
 
-    async def _judge_sidecar(self, event, peers: list[str]):
-        result = await self.judgment.judge(self, event, peers)
+    async def _judge_sidecar(self, event, peers: list[str], caption: str = ""):
+        result = await self.judgment.judge(self, event, peers, caption)
         if not result:
             return
         self._append_trace(event, "JUDGMENT", self.judgment.format_for_trace(result))

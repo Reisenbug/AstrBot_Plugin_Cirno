@@ -73,7 +73,9 @@ class Judgment:
             except Exception:
                 pass
 
-    def _build_state(self, plugin, event, peers: list[str]) -> dict:
+    def _build_state(
+        self, plugin, event, peers: list[str], caption: str = ""
+    ) -> dict:
         """判断要读的东西：群里刚才在聊什么，她此刻是什么状态。
 
         心情只给 arousal（精力），不给 valence（情绪好坏）。valence 参与"说不说"
@@ -89,7 +91,9 @@ class Judgment:
             "群里刚才在聊": peers,
             "这条消息": {
                 "谁说的": event.get_sender_name(),
-                "内容": event.message_str or "",
+                # 纯图片消息的 message_str 是空的，得把转述补上，
+                # 否则判断模型是在对一条空消息打分。
+                "内容": (event.message_str or "").strip() or caption or "[图片]",
                 "有没有叫琪露诺": bool(event.is_at_or_wake_command),
             },
             "琪露诺此刻": {
@@ -99,11 +103,13 @@ class Judgment:
             },
         }
 
-    async def judge(self, plugin, event, peers: list[str]) -> dict | None:
+    async def judge(
+        self, plugin, event, peers: list[str], caption: str = ""
+    ) -> dict | None:
         """三个判断一次问完。它们读同一份 state 且互不依赖，并行返回，只付一次延迟。"""
         if not self.enabled or self._client is None:
             return None
-        state = self._build_state(plugin, event, peers)
+        state = self._build_state(plugin, event, peers, caption)
         try:
             resp = await self._client.system_one(
                 state=state,
