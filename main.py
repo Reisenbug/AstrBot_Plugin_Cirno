@@ -16,6 +16,7 @@ from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.message_type import MessageType
 
 from .emotion import EmotionManager
+from .judgment import Judgment
 from .core_memory import CoreMemory
 from .jargon_filter import JargonStatisticalFilter
 from .meme_sender import MemeSelector
@@ -110,6 +111,12 @@ class Main(Star):
         )
         self._last_full_prompt: str = ""
         self._imitation_state: dict[str, dict] = {}  # session_id -> state
+        _judge_cfg = self.config.get("judgment_settings", {})
+        self.judgment = Judgment(
+            enabled=_judge_cfg.get("enable", False),
+            api_key=_judge_cfg.get("api_key", ""),
+            model=_judge_cfg.get("model", ""),
+        )
         data_dir = str(StarTools.get_data_dir("astrbot_plugin_cirno"))
         self._trace_dir = Path(data_dir) / "prompt_traces"
         self.user_msg_store = UserMessageStore(data_dir)
@@ -422,6 +429,23 @@ class Main(Star):
         return cut.strip() + "…"
 
     _CTX_LINE_RE = re.compile(r"^\[[^/\]]+/\d\d:\d\d:\d\d\]:\s*(.*)$")
+
+    @classmethod
+    def _peer_lines(cls, req, limit: int = 12) -> list[str]:
+        """群友最近说的那些话本身，判断模型要拿它看群里的节奏。
+        和 _peer_msg_len 解析同一个上下文块，那边要字数，这边要原话。"""
+        parts = getattr(req, "extra_user_content_parts", None) or []
+        lines = []
+        for part in parts:
+            text = getattr(part, "text", "") or ""
+            if "BEGIN CONTEXT" not in text:
+                continue
+            body = text.split("BEGIN CONTEXT---", 1)[-1].split("--- END", 1)[0]
+            for line in body.split("\n"):
+                m = cls._CTX_LINE_RE.match(line.strip())
+                if m and m.group(1).strip():
+                    lines.append(m.group(1).strip())
+        return lines[-limit:]
 
     @classmethod
     def _peer_msg_len(cls, req) -> float:
@@ -1135,6 +1159,23 @@ class Main(Star):
             self._prune_traces()
         except Exception as e:
             logger.warning(f"[琪露诺回溯] 写入失败: {e}")
+
+        # 旁路判断：只记进 trace，不改她的行为。先看判断准不准再谈接不接。
+        if self.judgment.enabled and not is_private:
+            self._spawn(
+                self._judge_sidecar(event, self._peer_lines(req)), "judge_sidecar"
+            )
+
+    async def _judge_sidecar(self, event, peers: list[str]):
+        result = await self.judgment.judge(self, event, peers)
+        if not result:
+            return
+        self._append_trace(event, "JUDGMENT", self.judgment.format_for_trace(result))
+        logger.info(
+            f"[琪露诺判断] 该开口={result['该开口']} "
+            f"长度={result['说多长']['score']} "
+            f"反应={result['挑哪种反应']['choice']}"
+        )
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
@@ -3128,6 +3169,7 @@ class Main(Star):
         yield event.plain_result("\n".join(lines))
 
     async def terminate(self):
+        await self.judgment.aclose()
         if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
         if self._diag_task and not self._diag_task.done():

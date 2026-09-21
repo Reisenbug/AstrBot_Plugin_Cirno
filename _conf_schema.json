@@ -194,6 +194,30 @@
       }
     }
   },
+  "judgment_settings": {
+    "description": "行为判断设置",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用 TypeSafe 行为判断",
+        "type": "bool",
+        "default": false,
+        "hint": "用 System One 模型判断她该不该开口、说多长、挑哪种反应。当前是旁路：只记录到回溯文件，不改变她的行为"
+      },
+      "api_key": {
+        "description": "TypeSafe API Key",
+        "type": "string",
+        "default": "",
+        "hint": "留空则读环境变量 TYPESAFE_API_KEY"
+      },
+      "model": {
+        "description": "模型",
+        "type": "string",
+        "default": "",
+        "hint": "留空用默认模型"
+      }
+    }
+  },
   "debug_settings": {
     "description": "调试设置",
     "type": "object",
