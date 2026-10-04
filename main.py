@@ -522,7 +522,7 @@ class Main(Star):
 
     _CAPTION_TEXT_RE = re.compile(r"<image_caption>(.*?)</image_caption>", re.DOTALL)
 
-    def _shrink_context(self, req):
+    def _shrink_context(self, req, is_private: bool = False):
         # 折叠之前先把这轮图片的转述留一份：纯图片消息的 message_str 是空的，
         # 判断模型没有别的地方能知道图里是什么。折叠后就只剩 [图片] 了。
         self._last_caption = ""
@@ -549,7 +549,9 @@ class Main(Star):
                 if is_assistant and ("（" in c or "(" in c or "*" in c):
                     c = self._strip_roleplay(c)
                 if is_assistant:
-                    c = self._cap_reply_len(self._flatten_lines(c))
+                    c = self._flatten_lines(c)
+                    if not is_private:
+                        c = self._cap_reply_len(c)
                 msg["content"] = c
             elif isinstance(c, list):
                 for item in c:
@@ -561,7 +563,9 @@ class Main(Star):
                     if is_assistant and ("（" in t or "(" in t or "*" in t):
                         t = self._strip_roleplay(t)
                     if is_assistant:
-                        t = self._cap_reply_len(self._flatten_lines(t))
+                        t = self._flatten_lines(t)
+                        if not is_private:
+                            t = self._cap_reply_len(t)
                     item["text"] = t
 
     async def _refresh_mood_note(self):
@@ -862,7 +866,9 @@ class Main(Star):
             event.stop_event()
             return
         event.set_extra("cirno_llm_start", time.time())
-        self._shrink_context(req)
+        self._shrink_context(
+            req, is_private=event.session.message_type != MessageType.GROUP_MESSAGE
+        )
         bot = getattr(event, "bot", None)
         if bot:
             self._cached_bot = bot
