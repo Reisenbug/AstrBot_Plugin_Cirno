@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 
 from astrbot.api import logger
@@ -94,18 +95,33 @@ class CoreMemory:
         if not user_msg:
             return ""
         from .recall_memory import extract_keywords
+
         keywords = set(extract_keywords(user_msg))
-        if not keywords:
+        mentioned_ids = set(re.findall(r"(?<!\d)\d{5,12}(?!\d)", user_msg))
+        if not keywords and not mentioned_ids:
             return ""
 
         lines = []
-        for uid, p in self._profiles.items():
-            if uid == sender_id:
+        exact_matches = [
+            (uid, p) for uid, p in self._profiles.items() if uid in mentioned_ids
+        ]
+        seen = set()
+        for uid, p in exact_matches + list(self._profiles.items()):
+            if uid == sender_id or uid in seen:
                 continue
             name = p.get("name", uid)
-            searchable = name + " " + p.get("relationship", "") + " " + " ".join(p.get("traits", []))
-            if not (keywords & set(extract_keywords(searchable))):
+            searchable = (
+                name
+                + " "
+                + p.get("relationship", "")
+                + " "
+                + " ".join(p.get("traits", []))
+            )
+            if uid not in mentioned_ids and not (
+                keywords & set(extract_keywords(searchable))
+            ):
                 continue
+            seen.add(uid)
             rel = p.get("relationship", "")
             if rel:
                 lines.append(f"- {name}(QQ{uid})：{rel}")
