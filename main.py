@@ -388,13 +388,6 @@ class Main(Star):
         head.append(" ".join(lines[cls._HIST_MAX_LINES - 1:]))
         return "\n".join(head)
 
-    _SENT_END_RE = re.compile(r"[。！？!?…\n]")
-    # 对齐 begin_dialogs 示例的量级（那 7 条是 18-36 字）。原来是 80，
-    # 而她的回复全在 78 字以下，等于从没生效过：喂回去的历史里，
-    # 她自己那十来条 40-78 字的回复把 26 字的示例整个淹掉了，
-    # 其中一半在抱怨"你怎么只会说一个字"，于是下一轮照着这个模板再抱怨一次。
-    _HIST_REPLY_CAP = 30
-
     MAX_TRACES = 50
 
     def _prune_traces(self):
@@ -417,20 +410,6 @@ class Main(Star):
                     f.write(f"\n\n=== {section} ===\n{body}")
         except Exception as e:
             logger.warning(f"[琪露诺回溯] 追加失败: {e}")
-
-    @classmethod
-    def _cap_reply_len(cls, text: str) -> str:
-        """历史里 bot 自己的长回复按句子边界截短，防止它当成'我就该这么长'的范本，
-        引发上下文自我喂养、回复越滚越长。只动喂回模型的历史副本，不改已发出的内容。"""
-        if len(text) <= cls._HIST_REPLY_CAP:
-            return text
-        cut = text[: cls._HIST_REPLY_CAP]
-        m = None
-        for m in cls._SENT_END_RE.finditer(cut):
-            pass
-        if m and m.end() >= 20:
-            return cut[: m.end()].strip()
-        return cut.strip() + "…"
 
     _CTX_LINE_RE = re.compile(r"^\[[^/\]]+/\d\d:\d\d:\d\d\]:\s*(.*)$")
 
@@ -522,7 +501,7 @@ class Main(Star):
 
     _CAPTION_TEXT_RE = re.compile(r"<image_caption>(.*?)</image_caption>", re.DOTALL)
 
-    def _shrink_context(self, req, is_private: bool = False):
+    def _shrink_context(self, req):
         # 折叠之前先把这轮图片的转述留一份：纯图片消息的 message_str 是空的，
         # 判断模型没有别的地方能知道图里是什么。折叠后就只剩 [图片] 了。
         self._last_caption = ""
@@ -538,7 +517,7 @@ class Main(Star):
             return
         for msg in req.contexts:
             # 人格的 begin_dialogs 示例（框架插在 contexts 最前面，带 _no_save）是
-            # 写给她看的范本，不能按历史回复截短/洗旁白，否则示例被自己的防漂移机制啃掉。
+            # 写给她看的范本，不能按历史回复整理/洗旁白，否则示例被自己的防漂移机制啃掉。
             if msg.get("_no_save"):
                 continue
             is_assistant = msg.get("role") == "assistant"
@@ -550,8 +529,6 @@ class Main(Star):
                     c = self._strip_roleplay(c)
                 if is_assistant:
                     c = self._flatten_lines(c)
-                    if not is_private:
-                        c = self._cap_reply_len(c)
                 msg["content"] = c
             elif isinstance(c, list):
                 for item in c:
@@ -564,8 +541,6 @@ class Main(Star):
                         t = self._strip_roleplay(t)
                     if is_assistant:
                         t = self._flatten_lines(t)
-                        if not is_private:
-                            t = self._cap_reply_len(t)
                     item["text"] = t
 
     async def _refresh_mood_note(self):
@@ -866,9 +841,7 @@ class Main(Star):
             event.stop_event()
             return
         event.set_extra("cirno_llm_start", time.time())
-        self._shrink_context(
-            req, is_private=event.session.message_type != MessageType.GROUP_MESSAGE
-        )
+        self._shrink_context(req)
         bot = getattr(event, "bot", None)
         if bot:
             self._cached_bot = bot
