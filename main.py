@@ -892,6 +892,9 @@ class Main(Star):
                 _pb.append((label, delta))
             _plen[0] = now
 
+        req.system_prompt = (req.system_prompt or "").replace(
+            "生气就嚷嚷", "生气时有时会嚷嚷，有时会闷着，或只对亲近的人漏出一点不快", 1
+        )
         _snap("persona基底")
         req.system_prompt += PERSONA_CONTEXT
         _snap("人格")
