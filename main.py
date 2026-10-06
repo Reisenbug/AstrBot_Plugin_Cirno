@@ -2799,7 +2799,7 @@ class Main(Star):
         yield event.plain_result(snap)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("琪露诺心情")
+    @filter.command("琪露诺心情", alias={"/琪露诺心情"})
     async def preset_mood(self, event: AstrMessageEvent, body: GreedyStr):
         from .cirno_moods import CIRNO_MOODS
 
