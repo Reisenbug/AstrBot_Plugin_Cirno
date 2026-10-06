@@ -1177,6 +1177,8 @@ class Main(Star):
         sender_name = event.get_sender_name()
         user_msg = event.message_str or ""
         bot_reply = resp.completion_text or ""
+        sentiment, intensity = self.emotion.peek_sentiment(bot_reply)
+        _, valence_shift, _ = self.emotion.extract_inner(bot_reply)
 
         bot_reply = re.sub(r"[（(][^）)]*[）)]", "", bot_reply, flags=re.DOTALL).strip()
         bot_reply = re.sub(r"\*[^*]+\*", "", bot_reply).strip()
@@ -1208,31 +1210,20 @@ class Main(Star):
         if tool_calls := getattr(resp, "tools_call_name", None):
             self._append_trace(event, "TOOL CALLS", ", ".join(tool_calls))
 
-        if bot_reply:
-            sentiment, intensity = self.emotion.peek_sentiment(bot_reply)
-            if sentiment:
-                self.mood_manager.mark_feeling(sentiment, intensity)
-                self.mark_dirty("mood")
+        if self._enable_emotion and sentiment:
+            self.mood_manager.mark_feeling(sentiment, intensity)
+            self.mark_dirty("mood")
 
-        valence_shift: float | None = None
-        if self._enable_emotion and bot_reply:
-            cleaned, valence_shift, _ = self.emotion.extract_inner(bot_reply)
-            if cleaned != bot_reply:
-                if not cleaned.strip():
-                    cleaned = random.choice(["哼。", "……怎么了？", "嗯？"])
-                resp.completion_text = cleaned
-                bot_reply = cleaned
-
-            if valence_shift is not None:
-                from .cirno_states import CIRNO_STATES
-                cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
-                self.emotion.update_emotion(valence_shift, cat)
-                logger.info(
-                    f"[琪露诺情绪] v={self.emotion.valence:.2f} a={self.emotion.arousal:.2f} "
-                    f"vuln={self.emotion.vulnerability:.2f} shift={valence_shift:.2f}"
-                )
-                self.emotion.increment_event_counter(sender_id)
-                self.mark_dirty("emotion")
+        if self._enable_emotion and valence_shift is not None:
+            from .cirno_states import CIRNO_STATES
+            cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
+            self.emotion.update_emotion(valence_shift, cat)
+            logger.info(
+                f"[琪露诺情绪] v={self.emotion.valence:.2f} a={self.emotion.arousal:.2f} "
+                f"vuln={self.emotion.vulnerability:.2f} shift={valence_shift:.2f}"
+            )
+            self.emotion.increment_event_counter(sender_id)
+            self.mark_dirty("emotion")
 
         if not user_msg or not bot_reply:
             return
