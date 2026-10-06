@@ -1217,7 +1217,7 @@ class Main(Star):
             self._append_trace(event, "TOOL CALLS", ", ".join(tool_calls))
 
         is_mood_test = bool(event.get_extra("cirno_test_mood") or event.get_extra("cirno_test_feeling"))
-        if self._enable_emotion and sentiment and not is_mood_test:
+        if self._enable_emotion and not is_mood_test:
             self.mood_manager.mark_feeling(sentiment, intensity)
             self.mark_dirty("mood")
 

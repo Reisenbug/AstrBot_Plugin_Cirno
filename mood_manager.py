@@ -12,8 +12,8 @@ from astrbot.api import logger
 
 from .cirno_moods import (
     CIRNO_MOODS,
-    FEELING_DECAY,
-    MILD_FEELING_DURATION,
+    FEELING_IDLE_GRACE,
+    FEELING_IDLE_HALF_LIFE,
     MILD_NEGATIVE_FEELING_STYLE,
     MILD_POSITIVE_FEELING_STYLE,
     MOOD_MAX_DURATION,
@@ -31,9 +31,8 @@ class CirnoMoodManager:
         self.mood_until = time.time() + self._roll_duration()
         # 她自己填的：此刻为什么是这个状态、心里挂着什么事
         self.note = ""
-        self.feeling = ""
-        self.feeling_intensity = ""
-        self.feeling_until = 0.0
+        self.feeling_charge = 0.0
+        self.feeling_updated_at = time.time()
 
     @staticmethod
     def _weighted_pick(exclude: str | None = None) -> str:
@@ -73,17 +72,28 @@ class CirnoMoodManager:
             logger.info(f"[琪露诺模式内容] {CIRNO_MOODS[self.mood]['label']}：{self.note}")
 
     def mark_feeling(self, sentiment: str, intensity: str = "mild") -> None:
-        """对话结束时把 <inner> 的情绪叠上来，轻微波动持续更短。"""
-        if sentiment not in FEELING_DECAY or intensity not in ("mild", "strong"):
-            return
-        self.feeling = sentiment
-        self.feeling_intensity = intensity
-        self.feeling_until = time.time() + (FEELING_DECAY[sentiment] if intensity == "strong" else MILD_FEELING_DURATION)
+        """这轮对话改变情绪；中性对话冲淡情绪，久未互动才按时间淡化。"""
+        now = time.time()
+        charge = self._effective_charge(now)
+        if sentiment in ("positive", "negative") and intensity == "strong":
+            charge = 1.0 if sentiment == "positive" else -1.0
+        elif sentiment in ("positive", "negative") and intensity == "mild":
+            charge += 0.4 if sentiment == "positive" else -0.4
+        elif sentiment == "neutral":
+            charge *= 0.6 if intensity == "strong" else 0.85
+        self.feeling_charge = max(-1.0, min(1.0, charge))
+        self.feeling_updated_at = now
 
-    def _active_feeling(self) -> str:
-        if self.feeling and time.time() < self.feeling_until:
-            return self.feeling
-        return ""
+    def _effective_charge(self, now: float | None = None) -> float:
+        now = time.time() if now is None else now
+        idle = max(0.0, now - self.feeling_updated_at - FEELING_IDLE_GRACE)
+        return self.feeling_charge * 0.5 ** (idle / FEELING_IDLE_HALF_LIFE)
+
+    def _active_feeling(self) -> tuple[str, str]:
+        charge = self._effective_charge()
+        if abs(charge) < 0.2:
+            return "", ""
+        return ("positive" if charge > 0 else "negative", "strong" if abs(charge) >= 0.75 else "mild")
 
     def build_seed_question(self) -> str:
         """让她自己填此刻状态的引子。"""
@@ -101,8 +111,9 @@ class CirnoMoodManager:
                 f"\n此刻你心里挂着这件事：{self.note}"
                 "\n这是你自己的事，对方并不知道。只有自然接得上当前话题时才提。"
             )
-        feeling = test_feeling if test_feeling is not None else self._active_feeling()
-        intensity = "strong" if test_feeling is not None else self.feeling_intensity
+        feeling, intensity = self._active_feeling()
+        if test_feeling is not None:
+            feeling, intensity = test_feeling, "strong"
         if feeling == "negative":
             parts.append(f"\n{NEGATIVE_FEELING_STYLE if intensity == 'strong' else MILD_NEGATIVE_FEELING_STYLE}")
         elif feeling == "positive":
@@ -114,13 +125,16 @@ class CirnoMoodManager:
     def get_debug_info(self, test_mood: str | None = None, test_feeling: str | None = None) -> dict:
         mood = test_mood or self.mood
         m = CIRNO_MOODS[mood]
+        feeling, intensity = self._active_feeling()
+        if test_feeling is not None:
+            feeling, intensity = test_feeling, "strong"
         return {
             "mood": mood,
             "mood_label": m["label"],
             "note": "" if test_mood else self.note,
             "remain_hours": round(max(0.0, self.mood_until - time.time()) / 3600, 1),
-            "feeling": test_feeling if test_feeling is not None else self._active_feeling() or "none",
-            "feeling_intensity": "strong" if test_feeling is not None else self.feeling_intensity if self._active_feeling() else "none",
+            "feeling": feeling or "none",
+            "feeling_intensity": intensity or "none",
         }
 
     def to_dict(self) -> dict:
@@ -129,9 +143,8 @@ class CirnoMoodManager:
             "mood_entered_at": self.mood_entered_at,
             "mood_until": self.mood_until,
             "note": self.note,
-            "feeling": self.feeling,
-            "feeling_intensity": self.feeling_intensity,
-            "feeling_until": self.feeling_until,
+            "feeling_charge": self.feeling_charge,
+            "feeling_updated_at": self.feeling_updated_at,
         }
 
     def from_dict(self, data: dict) -> None:
@@ -144,9 +157,20 @@ class CirnoMoodManager:
             self.mood_entered_at = time.time()
             self.mood_until = time.time() + self._roll_duration()
         self.note = str(data.get("note", ""))[:60]
-        self.feeling = str(data.get("feeling", ""))
-        self.feeling_intensity = str(data.get("feeling_intensity", "strong"))
-        try:
-            self.feeling_until = float(data.get("feeling_until", 0.0))
-        except (TypeError, ValueError):
-            self.feeling_until = 0.0
+        if "feeling_charge" in data:
+            try:
+                self.feeling_charge = max(-1.0, min(1.0, float(data["feeling_charge"])))
+                self.feeling_updated_at = float(data.get("feeling_updated_at", time.time()))
+            except (TypeError, ValueError):
+                self.feeling_charge = 0.0
+                self.feeling_updated_at = time.time()
+        else:
+            feeling = data.get("feeling", "")
+            try:
+                active = float(data.get("feeling_until", 0.0)) > time.time()
+            except (TypeError, ValueError):
+                active = False
+            if active and feeling in ("positive", "negative"):
+                strength = 1.0 if data.get("feeling_intensity", "strong") == "strong" else 0.4
+                self.feeling_charge = strength if feeling == "positive" else -strength
+            self.feeling_updated_at = time.time()

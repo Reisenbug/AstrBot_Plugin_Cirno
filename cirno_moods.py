@@ -68,13 +68,9 @@ CIRNO_MOODS = {
 MOOD_MIN_DURATION = 2400
 MOOD_MAX_DURATION = 14400
 
-# 情绪（开心/生气）叠加在模式上，不替代模式。
-# 正负情绪同样持久；轻微波动更短，新的情绪可以覆盖旧的。
-FEELING_DECAY = {
-    "positive": 1800,
-    "negative": 1800,
-}
-MILD_FEELING_DURATION = 600
+# 情绪（开心/生气）叠加在模式上，不替代模式。久未互动后才缓慢淡化。
+FEELING_IDLE_GRACE = 6 * 3600
+FEELING_IDLE_HALF_LIFE = 12 * 3600
 
 NEGATIVE_FEELING_STYLE = (
     "【现在的心情：生气】你心里有股火，眼前好玩的事也没那么想凑。"
