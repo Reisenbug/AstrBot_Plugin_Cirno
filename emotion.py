@@ -37,6 +37,7 @@ RATING_PROMPT = (
     "\n【必须遵守】每条回复末尾附上情绪标签，格式："
     "<inner>{\"sentiment\": \"positive/neutral/negative\", \"intensity\": \"mild/strong\"}</inner>"
     "\nsentiment评估对方说的话对你情绪的影响（不是对方的情绪状态）。"
+    "没有明显影响就选neutral；mild是有一点变化，strong是确实被触动。"
     "\n不要在正文中提及标签。"
 )
 

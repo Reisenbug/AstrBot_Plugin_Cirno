@@ -13,6 +13,9 @@ from astrbot.api import logger
 from .cirno_moods import (
     CIRNO_MOODS,
     FEELING_DECAY,
+    MILD_FEELING_DURATION,
+    MILD_NEGATIVE_FEELING_STYLE,
+    MILD_POSITIVE_FEELING_STYLE,
     MOOD_MAX_DURATION,
     MOOD_MIN_DURATION,
     NEGATIVE_FEELING_STYLE,
@@ -29,6 +32,7 @@ class CirnoMoodManager:
         # 她自己填的：此刻为什么是这个状态、心里挂着什么事
         self.note = ""
         self.feeling = ""
+        self.feeling_intensity = ""
         self.feeling_until = 0.0
 
     @staticmethod
@@ -69,11 +73,12 @@ class CirnoMoodManager:
             logger.info(f"[琪露诺模式内容] {CIRNO_MOODS[self.mood]['label']}：{self.note}")
 
     def mark_feeling(self, sentiment: str, intensity: str = "mild") -> None:
-        """对话结束时把 <inner> 的情绪叠上来。只有 strong 才留痕，避免每句话都在改状态。"""
-        if sentiment not in FEELING_DECAY or intensity != "strong":
+        """对话结束时把 <inner> 的情绪叠上来，轻微波动持续更短。"""
+        if sentiment not in FEELING_DECAY or intensity not in ("mild", "strong"):
             return
         self.feeling = sentiment
-        self.feeling_until = time.time() + FEELING_DECAY[sentiment]
+        self.feeling_intensity = intensity
+        self.feeling_until = time.time() + (FEELING_DECAY[sentiment] if intensity == "strong" else MILD_FEELING_DURATION)
 
     def _active_feeling(self) -> str:
         if self.feeling and time.time() < self.feeling_until:
@@ -97,10 +102,11 @@ class CirnoMoodManager:
                 "\n这是你自己的事，对方并不知道。只有自然接得上当前话题时才提。"
             )
         feeling = test_feeling if test_feeling is not None else self._active_feeling()
+        intensity = "strong" if test_feeling is not None else self.feeling_intensity
         if feeling == "negative":
-            parts.append(f"\n{NEGATIVE_FEELING_STYLE}")
+            parts.append(f"\n{NEGATIVE_FEELING_STYLE if intensity == 'strong' else MILD_NEGATIVE_FEELING_STYLE}")
         elif feeling == "positive":
-            parts.append(f"\n{POSITIVE_FEELING_STYLE}")
+            parts.append(f"\n{POSITIVE_FEELING_STYLE if intensity == 'strong' else MILD_POSITIVE_FEELING_STYLE}")
         elif feeling == "neutral":
             parts.append(f"\n{NEUTRAL_FEELING_STYLE}")
         return "".join(parts)
@@ -114,6 +120,7 @@ class CirnoMoodManager:
             "note": "" if test_mood else self.note,
             "remain_hours": round(max(0.0, self.mood_until - time.time()) / 3600, 1),
             "feeling": test_feeling if test_feeling is not None else self._active_feeling() or "none",
+            "feeling_intensity": "strong" if test_feeling is not None else self.feeling_intensity if self._active_feeling() else "none",
         }
 
     def to_dict(self) -> dict:
@@ -123,6 +130,7 @@ class CirnoMoodManager:
             "mood_until": self.mood_until,
             "note": self.note,
             "feeling": self.feeling,
+            "feeling_intensity": self.feeling_intensity,
             "feeling_until": self.feeling_until,
         }
 
@@ -137,6 +145,7 @@ class CirnoMoodManager:
             self.mood_until = time.time() + self._roll_duration()
         self.note = str(data.get("note", ""))[:60]
         self.feeling = str(data.get("feeling", ""))
+        self.feeling_intensity = str(data.get("feeling_intensity", "strong"))
         try:
             self.feeling_until = float(data.get("feeling_until", 0.0))
         except (TypeError, ValueError):

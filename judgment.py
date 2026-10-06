@@ -92,10 +92,12 @@ class Judgment:
             event.get_extra("cirno_test_mood"), test_feeling
         )
         valence = {
-            "positive": 0.85,
-            "negative": 0.15,
-            "neutral": 0.5,
-        }.get(mood["feeling"], plugin.emotion.valence)
+            ("positive", "strong"): 0.85,
+            ("positive", "mild"): 0.65,
+            ("negative", "strong"): 0.15,
+            ("negative", "mild"): 0.35,
+            ("neutral", "strong"): 0.5,
+        }.get((mood["feeling"], mood["feeling_intensity"]), plugin.emotion.valence)
 
         her_view = {"熟不熟": "没什么印象"}
         prof = (
