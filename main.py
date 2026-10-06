@@ -2794,6 +2794,45 @@ class Main(Star):
         logger.warning(f"[琪露诺诊断-手动]\n{snap}")
         yield event.plain_result(snap)
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("琪露诺心情")
+    async def preset_mood(self, event: AstrMessageEvent, first: str = "", second: str = ""):
+        from .cirno_moods import CIRNO_MOODS
+
+        modes = {v["label"]: k for k, v in CIRNO_MOODS.items()}
+        feelings = {"开心": "positive", "生气": "negative", "平静": "neutral"}
+        if first == "恢复" and not second:
+            self.mood_manager.clear_test_preset()
+        elif first:
+            mood = None
+            feeling = None
+            for value in (first, second):
+                if not value:
+                    continue
+                if value in modes or value in CIRNO_MOODS:
+                    mood = modes.get(value, value)
+                elif value in feelings:
+                    feeling = feelings[value]
+                else:
+                    yield event.plain_result(f"不认识「{value}」。用「/琪露诺心情」查看可选值。")
+                    return
+            if mood:
+                self.mood_manager.set_test_mood(mood)
+            if feeling:
+                self.mood_manager.set_test_feeling(feeling)
+
+        info = self.mood_manager.get_debug_info()
+        mode_label = info["mood_label"] if info["test_mood"] else f"自动（当前{info['mood_label']}）"
+        feeling_names = {"positive": "开心", "negative": "生气", "neutral": "平静"}
+        feeling_label = feeling_names.get(info["test_feeling"])
+        if feeling_label is None:
+            feeling_label = f"自动（当前{feeling_names.get(info['feeling'], '无')}）"
+        lines = [f"心情测试预设：模式={mode_label}，情绪={feeling_label}"]
+        if not first:
+            lines.append("用法：/琪露诺心情 <模式> [开心/生气/平静]；也可只设情绪；/琪露诺心情 恢复")
+            lines.append("模式：" + "、".join(modes))
+        yield event.plain_result("\n".join(lines))
+
     @filter.command("琪露诺状态")
     async def debug_state(self, event: AstrMessageEvent):
         info = self.state_manager.get_debug_info()

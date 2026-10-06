@@ -88,6 +88,11 @@ class Judgment:
             plugin.state_manager.current_state, {}
         ).get("label", "")
         mood = plugin.mood_manager.get_debug_info()
+        valence = {
+            "positive": 0.85,
+            "negative": 0.15,
+            "neutral": 0.5,
+        }.get(mood.get("test_feeling"), plugin.emotion.valence)
 
         her_view = {"熟不熟": "没什么印象"}
         prof = (
@@ -121,7 +126,7 @@ class Judgment:
                 "现在是什么状态": mood.get("mood_label", ""),
                 "心里挂着的事": mood.get("note", ""),
                 "精力": round(plugin.emotion.arousal, 2),
-                "心情好坏": round(plugin.emotion.valence, 2),
+                "心情好坏": round(valence, 2),
                 "刚被聊天影响成": mood.get("feeling", "none"),
             },
         }

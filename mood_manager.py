@@ -29,6 +29,8 @@ class CirnoMoodManager:
         self.note = ""
         self.feeling = ""
         self.feeling_until = 0.0
+        self.test_mood: str | None = None
+        self.test_feeling: str | None = None
 
     @staticmethod
     def _weighted_pick(exclude: str | None = None) -> str:
@@ -47,7 +49,21 @@ class CirnoMoodManager:
         return random.uniform(MOOD_MIN_DURATION, MOOD_MAX_DURATION)
 
     def is_expired(self) -> bool:
-        return time.time() >= self.mood_until
+        return self.test_mood is None and time.time() >= self.mood_until
+
+    def set_test_mood(self, mood: str) -> None:
+        if mood not in CIRNO_MOODS:
+            raise ValueError(mood)
+        self.test_mood = mood
+
+    def set_test_feeling(self, feeling: str) -> None:
+        if feeling not in ("positive", "negative", "neutral"):
+            raise ValueError(feeling)
+        self.test_feeling = feeling
+
+    def clear_test_preset(self) -> None:
+        self.test_mood = None
+        self.test_feeling = None
 
     def rotate(self) -> str:
         """换一个模式。返回新模式 id；调用方负责让她自己填 note。"""
@@ -88,14 +104,14 @@ class CirnoMoodManager:
         )
 
     def get_prompt_injection(self) -> str:
-        m = CIRNO_MOODS[self.mood]
+        m = CIRNO_MOODS[self.test_mood or self.mood]
         parts = [f"\n【你现在的状态：{m['label']}】{m['style']}"]
-        if self.note:
+        if self.note and self.test_mood is None:
             parts.append(
                 f"\n此刻你心里挂着这件事：{self.note}"
                 "\n这是你自己的事，对方并不知道。只有自然接得上当前话题时才提。"
             )
-        feeling = self._active_feeling()
+        feeling = self.test_feeling if self.test_feeling is not None else self._active_feeling()
         if feeling == "negative":
             parts.append(f"\n{NEGATIVE_FEELING_STYLE}")
         elif feeling == "positive":
@@ -103,13 +119,16 @@ class CirnoMoodManager:
         return "".join(parts)
 
     def get_debug_info(self) -> dict:
-        m = CIRNO_MOODS[self.mood]
+        mood = self.test_mood or self.mood
+        m = CIRNO_MOODS[mood]
         return {
-            "mood": self.mood,
+            "mood": mood,
             "mood_label": m["label"],
-            "note": self.note,
-            "remain_hours": round(max(0.0, self.mood_until - time.time()) / 3600, 1),
-            "feeling": self._active_feeling() or "none",
+            "note": "" if self.test_mood else self.note,
+            "remain_hours": None if self.test_mood else round(max(0.0, self.mood_until - time.time()) / 3600, 1),
+            "feeling": self.test_feeling if self.test_feeling is not None else self._active_feeling() or "none",
+            "test_mood": self.test_mood,
+            "test_feeling": self.test_feeling,
         }
 
     def to_dict(self) -> dict:
