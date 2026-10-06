@@ -87,12 +87,15 @@ class Judgment:
         state_label = CIRNO_STATES.get(
             plugin.state_manager.current_state, {}
         ).get("label", "")
-        mood = plugin.mood_manager.get_debug_info()
+        test_feeling = event.get_extra("cirno_test_feeling")
+        mood = plugin.mood_manager.get_debug_info(
+            event.get_extra("cirno_test_mood"), test_feeling
+        )
         valence = {
             "positive": 0.85,
             "negative": 0.15,
             "neutral": 0.5,
-        }.get(mood.get("test_feeling"), plugin.emotion.valence)
+        }.get(test_feeling, plugin.emotion.valence)
 
         her_view = {"熟不熟": "没什么印象"}
         prof = (

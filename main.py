@@ -14,6 +14,7 @@ from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.message.components import Image, Poke
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.message_type import MessageType
+from astrbot.core.star.filter.command import GreedyStr
 
 from .emotion import EmotionManager
 from .judgment import Judgment
@@ -897,7 +898,9 @@ class Main(Star):
 
         # 2. 状态机
         req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
-        req.system_prompt += self.mood_manager.get_prompt_injection()
+        req.system_prompt += self.mood_manager.get_prompt_injection(
+            event.get_extra("cirno_test_mood"), event.get_extra("cirno_test_feeling")
+        )
         req.system_prompt += self.situation.build_prompt(self._master_name())
         _snap("状态机")
 
@@ -1210,11 +1213,12 @@ class Main(Star):
         if tool_calls := getattr(resp, "tools_call_name", None):
             self._append_trace(event, "TOOL CALLS", ", ".join(tool_calls))
 
-        if self._enable_emotion and sentiment:
+        is_mood_test = bool(event.get_extra("cirno_test_mood") or event.get_extra("cirno_test_feeling"))
+        if self._enable_emotion and sentiment and not is_mood_test:
             self.mood_manager.mark_feeling(sentiment, intensity)
             self.mark_dirty("mood")
 
-        if self._enable_emotion and valence_shift is not None:
+        if self._enable_emotion and valence_shift is not None and not is_mood_test:
             from .cirno_states import CIRNO_STATES
             cat = CIRNO_STATES.get(self.state_manager.current_state, {}).get("category", "")
             self.emotion.update_emotion(valence_shift, cat)
@@ -2796,42 +2800,40 @@ class Main(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("琪露诺心情")
-    async def preset_mood(self, event: AstrMessageEvent, first: str = "", second: str = ""):
+    async def preset_mood(self, event: AstrMessageEvent, body: GreedyStr):
         from .cirno_moods import CIRNO_MOODS
 
         modes = {v["label"]: k for k, v in CIRNO_MOODS.items()}
         feelings = {"开心": "positive", "生气": "negative", "平静": "neutral"}
-        if first == "恢复" and not second:
-            self.mood_manager.clear_test_preset()
-        elif first:
-            mood = None
-            feeling = None
-            for value in (first, second):
-                if not value:
-                    continue
-                if value in modes or value in CIRNO_MOODS:
-                    mood = modes.get(value, value)
-                elif value in feelings:
-                    feeling = feelings[value]
-                else:
-                    yield event.plain_result(f"不认识「{value}」。用「/琪露诺心情」查看可选值。")
-                    return
-            if mood:
-                self.mood_manager.set_test_mood(mood)
-            if feeling:
-                self.mood_manager.set_test_feeling(feeling)
+        parts = body.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            yield event.plain_result(
+                "用法：/琪露诺心情 <心情> <消息>，例如 /琪露诺心情 生气 怎么了\n"
+                "可选心情：开心、生气、平静、" + "、".join(modes)
+            )
+            return
+        choice, message = parts
+        if choice in feelings:
+            event.set_extra("cirno_test_feeling", feelings[choice])
+        elif choice in modes or choice in CIRNO_MOODS:
+            event.set_extra("cirno_test_mood", modes.get(choice, choice))
+        else:
+            yield event.plain_result(f"不认识「{choice}」。用「/琪露诺心情」查看可选值。")
+            return
 
-        info = self.mood_manager.get_debug_info()
-        mode_label = info["mood_label"] if info["test_mood"] else f"自动（当前{info['mood_label']}）"
-        feeling_names = {"positive": "开心", "negative": "生气", "neutral": "平静"}
-        feeling_label = feeling_names.get(info["test_feeling"])
-        if feeling_label is None:
-            feeling_label = f"自动（当前{feeling_names.get(info['feeling'], '无')}）"
-        lines = [f"心情测试预设：模式={mode_label}，情绪={feeling_label}"]
-        if not first:
-            lines.append("用法：/琪露诺心情 <模式> [开心/生气/平静]；也可只设情绪；/琪露诺心情 恢复")
-            lines.append("模式：" + "、".join(modes))
-        yield event.plain_result("\n".join(lines))
+        event.message_str = message
+        conv_mgr = self.context.conversation_manager
+        umo = event.unified_msg_origin
+        cid = await conv_mgr.get_curr_conversation_id(umo)
+        if not cid:
+            cid = await conv_mgr.new_conversation(umo, event.get_platform_id())
+        conversation = await conv_mgr.get_conversation(umo, cid)
+        if not conversation:
+            cid = await conv_mgr.new_conversation(umo, event.get_platform_id())
+            conversation = await conv_mgr.get_conversation(umo, cid)
+        if not conversation:
+            raise RuntimeError("无法创建新的对话。")
+        yield event.request_llm(prompt=message, conversation=conversation)
 
     @filter.command("琪露诺状态")
     async def debug_state(self, event: AstrMessageEvent):
