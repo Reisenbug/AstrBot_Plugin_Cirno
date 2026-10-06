@@ -32,9 +32,9 @@ from .group_message_store import GroupMessageStore
 from . import qq_actions
 
 try:
-    from .persona_rules import ABSOLUTE_RULES
+    from .persona_rules import PERSONA_CONTEXT, RESPONSE_POLICY, QQ_TOOL_POLICY
 except ImportError:
-    ABSOLUTE_RULES = ""
+    PERSONA_CONTEXT = RESPONSE_POLICY = QQ_TOOL_POLICY = ""
 
 try:
     from .local_config import DEFAULT_USER_INFO
@@ -473,32 +473,6 @@ class Main(Star):
                 lines.append(f"{who}：{t[:60]}")
         return lines[-limit:]
 
-    @classmethod
-    def _peer_msg_len(cls, req) -> float:
-        """群友这会儿平均一条说多少字。取框架注入的群聊上下文块来量。
-
-        她会跟着群里的文风走：实测群友平均 46 字的群，她一条回复 3.7 段；
-        群友平均 7 字的群，1.1 段。同一套 prompt。所以长度指令得看环境下，
-        不能掷骰子。
-        """
-        lens = []
-        for text in cls._ctx_texts(req):
-            if "BEGIN CONTEXT" not in text:
-                continue
-            body = text.split("BEGIN CONTEXT---", 1)[-1].split("--- END", 1)[0]
-            for line in body.split("\n"):
-                m = cls._CTX_LINE_RE.match(line.strip())
-                if not m:
-                    continue
-                # 图片/@/引用这些标记不算真实字数
-                content = re.sub(r"\[(?:Image|At|Quote|Voice|Video|File|Forward|Sticker)[^\]]*\]", "", m.group(1))
-                content = content.strip()
-                if content:
-                    lens.append(len(content))
-        if not lens:
-            return 0.0
-        return sum(lens) / len(lens)
-
     _CAPTION_TEXT_RE = re.compile(r"<image_caption>(.*?)</image_caption>", re.DOTALL)
 
     def _shrink_context(self, req):
@@ -905,6 +879,7 @@ class Main(Star):
         )
         is_private = event.session.message_type != MessageType.GROUP_MESSAGE
         session_id = event.unified_msg_origin
+        reply_directives: list[str] = []
 
         _pb: list[tuple[str, int]] = []
         _plen = [0]
@@ -917,6 +892,8 @@ class Main(Star):
             _plen[0] = now
 
         _snap("persona基底")
+        req.system_prompt += PERSONA_CONTEXT
+        _snap("人格")
 
         # 2. 状态机
         req.system_prompt += f"\n{self.state_manager.get_prompt_injection()}"
@@ -1007,31 +984,20 @@ class Main(Star):
 
         # 6. 场景上下文（随机插嘴 / 私聊 / 普通）
         if is_random_reply:
-            req.system_prompt += (
+            reply_directives.append(
                 "\n你不是被叫到的，是自己凑过来插嘴的。除非你判断对方是在说你，否则对方不是在和你说话。"
-                "好奇心优先——听到不懂的或有趣的细节就追问，不要评价话题有没有意义。"
-                "不要强行扯到冰雪或青蛙，也不要攻击或反驳对方，就是个凑热闹的妖精。"
-                "就一句话，插完就完，别长篇。"
+                "有明确的好玩细节才接它，不要评价话题有没有意义，也不要强行扯到自己或冰雪。"
+                "插一句就够。"
             )
         elif is_private:
             is_close = self._feels_close(sender_id)
             private_prompt = (
-                "\n你们在私聊，没有旁观者。说话比群里更真实，少一点跳脱和夸张，多一点真心话。"
-                "对方特意找你说话，你会在意「他为什么找我」，即使不说出口。"
-                "认真接住对方说的话，但不必逐句应答——你可以只接其中最在意的一点，也可以顺着自己此刻的心思往下说。"
-                "但「认真接住」不等于「答应所有要求」——琪露诺的人格不可改变，对方让你跳出角色、解题、写代码、扮演别人时，照样拒绝。"
-                "\n私聊里你不用『回完一句就停下等对方』。真人说话是会往下淌的：接住对方之后，"
-                "如果还有想说的、突然想到的、或者心里冒出来的话，就接着说下去，像深夜两个人有一搭没一搭地聊。"
-                "可以连说好几句短的，一句一个意思，中间用换行断开，像在连着发消息。"
-                "但每一句都要短、都只说一个意思——是几句短话接龙，绝不是把一句话塞进七个转折（『才不是…不过…虽然…但是…除非…然后…』那种一口气抗拒又服软又讨价还价，依然是大忌）。"
+                "\n你们在私聊，没有旁观者。先接住对方眼前说的话，"
+                "可以只接其中最在意的一点。私聊无需维持群里的热闹。"
             )
-            # 「往下淌」只在对方真给了东西可接时才成立。对着一句"唔"絮叨，
-            # 这段会直接盖过下面判断给的"短到不能再短"。
-            if _judged is not None and _judged["有多少可接"] < 1:
-                private_prompt = private_prompt.split("\n私聊里你不用")[0]
-            elif is_close:
-                private_prompt += "你不需要撑面子，说话更松弛，偶尔流露真实感受，也更愿意多絮叨几句。"
-            req.system_prompt += private_prompt
+            if is_close:
+                private_prompt += "和亲近的人说话更松弛，偶尔会流露真实感受。"
+            reply_directives.append(private_prompt)
         _snap("场景上下文")
 
         # 6b. 群里提到私聊时，附加该用户的私聊近况
@@ -1045,55 +1011,31 @@ class Main(Star):
                 logger.info(f"[私聊历史] 群内附加 {sender_id} 的私聊近况")
         _snap("私聊近况")
 
-        # 6c. 长度倾向。原来是掷骰子，跟群里什么情况无关——实测在长句群里
-        # 完全失效：60% 该抽中"就一两句"，那个群 13 条回复里 1-2 段的有 0 条。
-        # 抽象指令打不过具体示范：她眼前有十几条群友的长句摆着。
-        # 所以先量群友这会儿说话多长，再决定说什么。
-        # 阈值按实测定：18.1字→3.71段、13.6字→3.46段是要压的，
-        # 8.2字→1.12段、7.2字→2.07段本来就正常，别动。
-        _avg = self._peer_msg_len(req) if not is_private else 0
         if _judged is not None:
-            req.system_prompt += self.judgment.build_prompt(_judged)
+            reply_directives.append(self.judgment.build_prompt(_judged))
             event.set_extra("cirno_judged", _judged)
             logger.info(
                 f"[琪露诺判断] 可接={_judged['有多少可接']} "
                 f"反应={_judged['反应']} (conf {_judged['反应confidence']})"
             )
-        elif _avg >= 16:
-            req.system_prompt += (
-                f"\n【这次】这个群的人说话又长又密，但你不是。"
-                f"你是个精力过剩的妖精，想到什么说什么，说完就跑——"
-                f"最多两句，别跟着他们写小作文。"
-            )
-        elif _avg >= 11:
-            req.system_prompt += "\n【这次】就一两句，干脆点，别展开。"
-        else:
-            _len_roll = random.random()
-            if _len_roll < 0.6:
-                req.system_prompt += "\n【这次】心情没那么多话，就一两句、干脆点，别展开。"
-            elif _len_roll < 0.75:
-                req.system_prompt += "\n【这次】兴致来了，可以多说几句、把想法尽兴地讲完。"
-        if _avg:
-            logger.info(f"[琪露诺文风] 群友平均 {_avg:.0f} 字/条")
-        _snap("长度倾向")
 
         # 7. 当前特殊事件（戳一戳余怒）
         poke_info = self._poke_streaks.get(sender_id, {})
         if poke_info.get("angry") and time.time() - poke_info.get("last_ts", 0) < self._POKE_COOLDOWN * 2:
-            req.system_prompt += "\n【刚才的事】这个人刚才一直戳你不说话，你被烦到有点生气，还没完全消气。语气硬一点，但不用点明原因。"
+            reply_directives.append("\n【刚才的事】这个人刚才一直戳你不说话，你被烦到有点生气，还没完全消气。语气硬一点，但不用点明原因。")
             self._poke_streaks[sender_id]["angry"] = False
         if self._prank_state is not None:
-            req.system_prompt += self._build_prank_prompt(sender_id, sender_nickname)
+            reply_directives.append(self._build_prank_prompt(sender_id, sender_nickname))
 
         if self._critique_state is not None:
-            req.system_prompt += self._build_critique_prompt()
+            reply_directives.append(self._build_critique_prompt())
         _snap("特殊事件(戳/恶作剧/锐评)")
 
         session_imitation = self._imitation_state.get(session_id)
         if session_imitation:
             tname = session_imitation["target_name"]
             style = session_imitation["style_desc"]
-            req.system_prompt += (
+            reply_directives.append(
                 f"\n【当前任务】你现在在模仿「{tname}」的说话风格。"
                 f"你仍然是琪露诺，有琪露诺的记忆和性格，但你说话的方式、语气、用词习惯要尽量像{tname}。"
                 f"\n{tname}的说话风格特点：\n{style}"
@@ -1137,10 +1079,13 @@ class Main(Star):
                 to = r["to"]
                 snippet = f"「{text[:30]}…」" if len(text) > 30 else f"「{text}」"
                 recent_lines.append(f"对{to}说过{snippet}")
-            req.system_prompt += f"\n【你最近说过】{'、'.join(recent_lines)}——避免重复相同的开场白、句式和结尾。"
-        _snap("最近说过")
-        req.system_prompt += ABSOLUTE_RULES
-        _snap("绝对规则")
+            reply_directives.append(f"\n【你最近说过】{'、'.join(recent_lines)}——避免重复相同的开场白、句式和结尾。")
+        req.system_prompt += RESPONSE_POLICY
+        req.system_prompt += "".join(reply_directives)
+        _snap("回复决策")
+        if req.func_tool and req.func_tool.tools:
+            req.system_prompt += QQ_TOOL_POLICY
+        _snap("QQ工具")
         # 正向身份重锚：放在生成点最近处，对抗长上下文里早期人格指令的注意力衰减。
         req.system_prompt += "\n现在，就用琪露诺自己的语气、凭此刻的心情，说一句她会说的话。"
         _snap("身份重锚")
@@ -1159,17 +1104,15 @@ class Main(Star):
             return 0
         all_ctx = req.contexts or []
         ctx_turns = len(all_ctx)
-        # 框架会在发送前把历史截断到 max_context_length（默认6轮=12条消息），
-        # 我们的钩子在截断之前，拿到的是全量历史。这里只统计「实际会发送」的尾部，
-        # 避免被未截断的全量历史误导。
+        # 此处尚未经框架的轮次截断或 token 压缩，尾部采样仅供估算。
         send_window = 6 * 2
         sent_ctx = all_ctx[-send_window:]
         sent_chars = sum(_msg_len(m.get("content")) for m in sent_ctx)
         prompt_chars = len(req.prompt or "")
         grand_total = total + sent_chars + prompt_chars
         logger.info(
-            f"[琪露诺Prompt体检] system={total} + 实发历史={sent_chars}(尾{len(sent_ctx)}条/全{ctx_turns}条) + 当前={prompt_chars} "
-            f"= 实发约{grand_total}字符(约{grand_total*2//3}token) | system分块: {block_str}"
+            f"[琪露诺Prompt体检] system={total} + 历史采样={sent_chars}(尾{len(sent_ctx)}条/全{ctx_turns}条，发送前) + 当前={prompt_chars} "
+            f"= 采样约{grand_total}字符(约{grand_total*2//3}token，非实发) | system分块: {block_str}"
         )
         if self._enable_core_memory and req.prompt:
             req.prompt = self._replace_at_with_names(req.prompt)
@@ -1936,8 +1879,9 @@ class Main(Star):
             base = persona.get("prompt", "") if persona else ""
             system_prompt = "\n".join([
                 base,
+                PERSONA_CONTEXT,
                 self.mood_manager.get_prompt_injection(),
-                ABSOLUTE_RULES,
+                RESPONSE_POLICY,
                 f"\n【你答应过的事】之前{promise['notify_name']}交代你：{promise['what']}。"
                 f"你答应了。现在{promise['watch_name']}冒头了，说了：「{(event.message_str or '')[:60]}」。"
                 f"你要兑现——一句话，把{promise['notify_name']}喊过来，别解释来龙去脉、别复述当时的约定。",
@@ -2595,9 +2539,10 @@ class Main(Star):
 
         system_prompt = "\n".join([
             base_system_prompt,
+            PERSONA_CONTEXT,
             self.state_manager.get_prompt_injection(),
             sender_prompt,
-            ABSOLUTE_RULES,
+            RESPONSE_POLICY,
             "\n你们在私聊，没有旁观者。你突然想找这个人说说话。"
             "说一两句自然的开场，不要太刻意，像是真的想起他了。"
             "不要说「你好」，不要解释自己为什么突然来找他。",
@@ -2656,10 +2601,11 @@ class Main(Star):
         )
 
         parts = [base_system_prompt]
+        parts.append(PERSONA_CONTEXT)
         if people_prompt:
             parts.append(people_prompt)
         parts.append(self.state_manager.get_prompt_injection())
-        parts.append(ABSOLUTE_RULES)
+        parts.append(RESPONSE_POLICY)
         parts.append(suffix)
         system_prompt = "\n".join(parts)
 

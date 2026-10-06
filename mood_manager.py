@@ -93,8 +93,7 @@ class CirnoMoodManager:
         if self.note:
             parts.append(
                 f"\n此刻你心里挂着这件事：{self.note}"
-                "\n这是你自己的事，对方并不知道。聊着聊着可以自己冒出来——"
-                "不用等人问，也不用非要跟当前话题有关。"
+                "\n这是你自己的事，对方并不知道。只有自然接得上当前话题时才提。"
             )
         feeling = self._active_feeling()
         if feeling == "negative":
