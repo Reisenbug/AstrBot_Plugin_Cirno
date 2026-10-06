@@ -16,6 +16,7 @@ from .cirno_moods import (
     MOOD_MAX_DURATION,
     MOOD_MIN_DURATION,
     NEGATIVE_FEELING_STYLE,
+    NEUTRAL_FEELING_STYLE,
     POSITIVE_FEELING_STYLE,
 )
 
@@ -100,9 +101,8 @@ class CirnoMoodManager:
             parts.append(f"\n{NEGATIVE_FEELING_STYLE}")
         elif feeling == "positive":
             parts.append(f"\n{POSITIVE_FEELING_STYLE}")
-        if test_feeling is not None:
-            label = {"positive": "开心", "negative": "生气", "neutral": "平静"}[test_feeling]
-            parts.append(f"\n【你此刻的心情：{label}】这是你自己的心情，不是对方的。回应时保持这个心情；有人问起就照实说。")
+        elif feeling == "neutral":
+            parts.append(f"\n{NEUTRAL_FEELING_STYLE}")
         return "".join(parts)
 
     def get_debug_info(self, test_mood: str | None = None, test_feeling: str | None = None) -> dict:

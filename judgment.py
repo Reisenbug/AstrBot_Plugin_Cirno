@@ -95,7 +95,7 @@ class Judgment:
             "positive": 0.85,
             "negative": 0.15,
             "neutral": 0.5,
-        }.get(test_feeling, plugin.emotion.valence)
+        }.get(mood["feeling"], plugin.emotion.valence)
 
         her_view = {"熟不熟": "没什么印象"}
         prof = (
@@ -155,7 +155,8 @@ class Judgment:
                             "琪露诺这次该挑哪一种反应？先看对方在对谁说什么，"
                             "不要替对方编意图。没话头时可以随口应一声；"
                             "认真说话时可以直接接住；有明确的玩笑或破绽时再逗回去。"
-                            "她此刻的心情和对这个人的印象影响语气，但不改变对方实际说的话。"
+                            "她此刻的心情也会改变她想接什么、选哪种反应，不只是改变语气；"
+                            "但别因此编造对方没说过的意图。"
                         ),
                         criteria=REACTIONS,
                     ),
