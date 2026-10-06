@@ -1183,7 +1183,7 @@ class Main(Star):
         sender_name = event.get_sender_name()
         user_msg = event.message_str or ""
         bot_reply = resp.completion_text or ""
-        sentiment, intensity = self.emotion.peek_sentiment(bot_reply)
+        feeling, intensity = self.emotion.peek_feeling(bot_reply)
         _, valence_shift, _ = self.emotion.extract_inner(bot_reply)
 
         bot_reply = re.sub(r"[（(][^）)]*[）)]", "", bot_reply, flags=re.DOTALL).strip()
@@ -1218,7 +1218,7 @@ class Main(Star):
 
         is_mood_test = bool(event.get_extra("cirno_test_mood") or event.get_extra("cirno_test_feeling"))
         if self._enable_emotion and not is_mood_test:
-            self.mood_manager.mark_feeling(sentiment, intensity)
+            self.mood_manager.mark_feeling(feeling, intensity)
             self.mark_dirty("mood")
 
         if self._enable_emotion and valence_shift is not None and not is_mood_test:
@@ -2804,10 +2804,10 @@ class Main(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("琪露诺心情", alias={"/琪露诺心情"})
     async def preset_mood(self, event: AstrMessageEvent, body: GreedyStr):
-        from .cirno_moods import CIRNO_MOODS
+        from .cirno_moods import CIRNO_MOODS, FEELING_NAMES
 
         modes = {v["label"]: k for k, v in CIRNO_MOODS.items()}
-        feelings = {"开心": "positive", "生气": "negative", "平静": "neutral"}
+        feelings = {**FEELING_NAMES, "平静": "neutral"}
         parts = body.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip():
             yield event.plain_result(

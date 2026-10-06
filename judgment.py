@@ -91,13 +91,14 @@ class Judgment:
         mood = plugin.mood_manager.get_debug_info(
             event.get_extra("cirno_test_mood"), test_feeling
         )
-        valence = {
-            ("positive", "strong"): 0.85,
-            ("positive", "mild"): 0.65,
-            ("negative", "strong"): 0.15,
-            ("negative", "mild"): 0.35,
-            ("neutral", "strong"): 0.5,
-        }.get((mood["feeling"], mood["feeling_intensity"]), plugin.emotion.valence)
+        from .cirno_moods import FEELING_VALENCE, FEELINGS
+
+        feeling = mood["feeling"]
+        if feeling in FEELING_VALENCE:
+            target = FEELING_VALENCE[feeling]
+            valence = target if mood["feeling_intensity"] == "strong" else 0.5 + (target - 0.5) * 0.45
+        else:
+            valence = plugin.emotion.valence
 
         her_view = {"熟不熟": "没什么印象"}
         prof = (
@@ -132,7 +133,7 @@ class Judgment:
                 "心里挂着的事": mood.get("note", ""),
                 "精力": round(plugin.emotion.arousal, 2),
                 "心情好坏": round(valence, 2),
-                "刚被聊天影响成": mood.get("feeling", "none"),
+                "现在的感受": FEELINGS[feeling][0] if feeling in FEELINGS else "平静",
             },
         }
 

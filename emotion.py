@@ -15,6 +15,8 @@ import time
 
 from astrbot.api import logger
 
+from .cirno_moods import FEELING_VALENCE
+
 INNER_PATTERN = re.compile(r"<inner>(.*?)</inner>", re.DOTALL)
 
 # 状态类别对情绪波动的放大：休息时被吵更烦，社交时的好事更受用
@@ -35,9 +37,11 @@ _SENTIMENT_TO_VALENCE = {
 
 RATING_PROMPT = (
     "\n【必须遵守】每条回复末尾附上情绪标签，格式："
-    "<inner>{\"sentiment\": \"positive/neutral/negative\", \"intensity\": \"mild/strong\"}</inner>"
-    "\nsentiment评估对方说的话对你情绪的影响（不是对方的情绪状态）。"
-    "没有明显影响就选neutral；mild是有一点变化，strong是确实被触动。"
+    '<inner>{"feeling": "joy/anger/sadness/worry/embarrassment/affection/surprise/curiosity/neutral", "intensity": "mild/strong"}</inner>'
+    "\nfeeling选这轮对话给你带来的感受，不是对方的情绪；开心joy，生气anger，难过sadness，"
+    "担心worry，害羞embarrassment，亲近affection，惊讶surprise，好奇curiosity。"
+    "只评估这一轮带来的变化，别把原本的心情重复标上。没有明显影响选neutral；"
+    "mild是有一点变化，strong是确实被触动。不要为选标签编造原因。"
     "\n不要在正文中提及标签。"
 )
 
@@ -118,8 +122,8 @@ class EmotionManager:
         return self._emotion["vulnerability"]
 
     @staticmethod
-    def peek_sentiment(bot_reply: str) -> tuple[str, str]:
-        """只取 <inner> 里的原始 sentiment/intensity，供心情层使用。取不到返回空。"""
+    def peek_feeling(bot_reply: str) -> tuple[str, str]:
+        """只取 <inner> 里的感受与强度，兼容旧的 sentiment 标签。"""
         m = INNER_PATTERN.search(bot_reply)
         if not m:
             return "", ""
@@ -127,10 +131,9 @@ class EmotionManager:
             data = json.loads(m.group(1))
         except (json.JSONDecodeError, ValueError, AttributeError):
             return "", ""
-        return (
-            str(data.get("sentiment", "")).strip().lower(),
-            str(data.get("intensity", "")).strip().lower(),
-        )
+        feeling = str(data.get("feeling", data.get("sentiment", ""))).strip().lower()
+        feeling = {"positive": "joy", "negative": "anger"}.get(feeling, feeling)
+        return feeling, str(data.get("intensity", "")).strip().lower()
 
     def extract_inner(self, bot_reply: str) -> tuple[str, float | None, str | None]:
         """剥掉 <inner> 标签，返回 (正文, valence_shift, reason)。"""
@@ -140,9 +143,15 @@ class EmotionManager:
         cleaned = (bot_reply[:m.start()].rstrip() + bot_reply[m.end():].rstrip()).strip()
         try:
             data = json.loads(m.group(1))
-            sentiment = str(data.get("sentiment", "neutral")).strip().lower()
+            feeling = str(data.get("feeling", data.get("sentiment", "neutral"))).strip().lower()
             intensity = str(data.get("intensity", "mild")).strip().lower()
-            vs = _SENTIMENT_TO_VALENCE.get((sentiment, intensity), 0.5)
+            if feeling not in FEELING_VALENCE and feeling not in ("positive", "negative"):
+                return cleaned, None, None
+            if feeling in ("positive", "negative", "neutral"):
+                vs = _SENTIMENT_TO_VALENCE.get((feeling, intensity), 0.5)
+            else:
+                valence = FEELING_VALENCE.get(feeling, 0.5)
+                vs = valence if intensity == "strong" else 0.5 + (valence - 0.5) * 0.45
             return cleaned, vs, data.get("reason")
         except (json.JSONDecodeError, ValueError, AttributeError):
             return cleaned, None, None
